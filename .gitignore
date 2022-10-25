@@ -1,3 +1,8 @@
+#Ignore Data and the previous models
+GRAND_DATA/
+GRAND_ML_model/
+slurm_script.sbatch
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
