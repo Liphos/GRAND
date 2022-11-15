@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Dict
 from scipy.spatial import KDTree
 
 
@@ -48,4 +48,52 @@ def computeNeighbors(lstPositions: Union[List[Tuple[float]], np.ndarray], n_clos
         for antenna_close in close_point_index:
             closest_points.add((antenna, antenna_close))
     
-    return closest_points
+    return sorted(closest_points, key=lambda x: x[0])
+
+def compute_peak2peak(efields_all_events):
+    peak_to_peak_arr = np.zeros((len(efields_all_events), 2, 3)) #For the (max, min) and the 3 coordinates
+    peak_to_peak_ind = np.zeros((len(efields_all_events), 2, 3)) #For the (max, min) and the 3 coordinates
+    peak_to_peak_all = []
+
+    #Peak to Peak energy
+    for i in range(len(efields_all_events)):
+        peak_to_peak_energy = np.max(efields_all_events[i][:, :, 1:], axis=1) - np.min(efields_all_events[i][:, :, 1:], axis=1)
+        peak_to_peak_all.append(peak_to_peak_energy)
+        peak_to_peak_arr[i] = [np.max(peak_to_peak_energy, axis=0), np.min(peak_to_peak_energy, axis=0)]
+        peak_to_peak_ind[i] = [np.argmax(peak_to_peak_energy, axis=0), np.argmin(peak_to_peak_energy, axis=0)]
+        
+    return peak_to_peak_all, peak_to_peak_arr, peak_to_peak_ind
+
+def compute_time_diff(efields_all_events):
+    time_diff_peak = np.zeros((len(efields_all_events), 2)) #For the (max, min) and we consider just Y since it is the most visible
+    time_diff_peak_index = np.zeros((len(efields_all_events), 2))
+    time_diff_all = []
+
+    smooth_time_diff_peak = np.zeros((len(efields_all_events), 2))
+    smooth_time_diff_peak_index = np.zeros((len(efields_all_events), 2))
+
+
+    for i in range(len(efields_all_events)):
+        
+        time_diff = - (efields_all_events[i][:, :, 0][np.arange(len(efields_all_events[i])), np.argmax(efields_all_events[i][:, :, 2], axis=1)] - efields_all_events[i][:, :, 0][np.arange(len(efields_all_events[i])), np.argmin(efields_all_events[i][:, :, 2], axis=1)])
+
+        time_diff_peak[i] = [np.max(time_diff, axis=0), np.min(time_diff, axis=0)]
+        time_diff_peak_index[i] = [np.argmax(time_diff, axis=0), np.argmin(time_diff, axis=0)]
+        time_diff_all.append(time_diff)
+        
+    return time_diff_all, time_diff_peak, time_diff_peak_index, smooth_time_diff_peak, smooth_time_diff_peak_index
+
+def compute_time_response(efields_all_events):
+    tau_arr = []
+    indicie_max_arr = []
+    for event in range(len(efields_all_events)):
+        indicie_max = []
+        tau = []
+        for ant in range(len(efields_all_events[event])):
+            indicie_max.append(np.argmax(efields_all_events[event][ant, :, 2], axis=0))
+            tau.append(np.where(efields_all_events[event][ant, :, 2]>0.1*efields_all_events[event][ant, int(indicie_max[-1]), 2])[0][0])
+            
+        indicie_max_arr.append(indicie_max)
+        tau_arr.append(tau)
+    
+    return indicie_max_arr, tau_arr
