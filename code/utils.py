@@ -29,13 +29,14 @@ def computeNeighbors(lstPositions: Union[List[Tuple[float]], np.ndarray], n_clos
     Returns:
         set: The edge index
     """
-    closest_points = set()
+    closest_points = []
+    all_dist = []
     for antenna in range(len(lstPositions)):
         close_point = [np.inf for _ in range(n_closest)]
-        close_point_index = [0, 0, 0]
+        close_point_index = [0 for _ in range(n_closest)]
         for antenna_close in range(len(lstPositions)):
             if antenna != antenna_close:
-                dist = np.sum(np.square(list(map(lambda i, j: i - j, lstPositions[antenna], lstPositions[antenna_close]))), axis=0)
+                dist = np.sqrt(np.sum(np.square(list(map(lambda i, j: i - j, lstPositions[antenna], lstPositions[antenna_close]))), axis=0))
                 for index in range(n_closest):
                     if dist < close_point[index]:
                         close_point[index+1:] = close_point[index:-1]
@@ -45,10 +46,13 @@ def computeNeighbors(lstPositions: Union[List[Tuple[float]], np.ndarray], n_clos
                         close_point_index[index] = antenna_close
                         break
         
-        for antenna_close in close_point_index:
-            closest_points.add((antenna, antenna_close))
+        for incr in range(len(close_point_index)):
+            closest_points.append([antenna, close_point_index[incr]])
+            all_dist.append(close_point[incr])
     
-    return sorted(closest_points, key=lambda x: x[0])
+    indicies = [i for i in range(len(closest_points))]
+    indicies.sort(key=lambda x:closest_points[0])
+    return np.array(closest_points)[indicies], np.array(all_dist)[indicies]
 
 def compute_peak2peak(efields_all_events):
     peak_to_peak_arr = np.zeros((len(efields_all_events), 2, 3)) #For the (max, min) and the 3 coordinates
