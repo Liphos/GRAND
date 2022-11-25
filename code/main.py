@@ -6,9 +6,11 @@ import torch.nn.functional as F
 
 from create_dataset import GrandDataset, GrandDatasetSignal, GrandDatasetEdgeDist, GrandDatasetNoDense
 from model import TopkGCN, SimpleSignalModel, TopkGAT, TopkSAGE
+from utils import scaled_mse
 
 import argparse
 import os
+
 
 if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
@@ -44,9 +46,15 @@ if __name__ == '__main__':
     parser.add_argument("--readout",
                         type=str, default="sum",
                         help="The readout function to use")
-    parser.add_argument("--ratio",
+    parser.add_argument("--ant_ratio_train",
+                        type=float, default=1,
+                        help="The ratio of dense or not dense antenna to use for training, 0 means only sparse antenna and 2 means only dense antenna")
+    parser.add_argument("--ant_ratio_test",
+                        type=float, default=1,
+                        help="The ratio of dense or not dense antenna to use for training, 0 means only sparse antenna and 2 means only dense antenna")
+    parser.add_argument("--topkratio",
                         type=float, default=0.8,
-                        help="The ratioà to use for the topk pooling")
+                        help="The ratio to use for the topk pooling")
     parser.add_argument("--dropout",
                         type=float, default=0.2,
                         help="The dropout rate")
@@ -60,7 +68,7 @@ if __name__ == '__main__':
                         type=int, default=128,
                         help="The seed used for the shuffling and the model")
     parser.add_argument("--device",
-                        type=str, default='cuda',
+                        type=str, default='cpu',
                         help="The device to use")
 
     config = vars(parser.parse_args())
@@ -101,7 +109,9 @@ if __name__ == '__main__':
         print("Warning depricated")
         dataset = GrandDatasetSignal().shuffle()
     else:
-        train_dataset, test_dataset = GrandDatasetNoDense().train_dataset, GrandDatasetNoDense().test_dataset
+        
+        dataset = GrandDatasetNoDense()
+        train_dataset, test_dataset = dataset.train_datasets[int(config["ant_ratio_train"]*5)], dataset.test_datasets[int(config["ant_ratio_test"]*5)]
 
     # We don't want to shuffle to keep the same order in the data
     train_loader = tg.loader.DataLoader(
@@ -116,7 +126,7 @@ if __name__ == '__main__':
                     )
 
     def train():
-        print("Feature size: " + str(dataset.num_features) + " features")
+        print("Feature size: " + str(train_dataset.num_features) + " features")
         print('The number of labels  is ' + 'len(batch.y)/config["batch_size"]')
         print("config: ", config)
 
@@ -143,7 +153,7 @@ if __name__ == '__main__':
                     weight_decay=config["weight_decay"])
             else:
                 model = model_class(
-                    dataset.num_features,
+                    train_dataset.num_features,
                     config["embed_size"],
                     num_classes=1,
                     config=config
@@ -178,7 +188,7 @@ if __name__ == '__main__':
                     else:
                         pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
 
-                    loss = F.mse_loss(pred[:, 0], data.y.to(device))
+                    loss = scaled_mse(pred[:, 0], data.y.to(device))
                     if torch.any(loss == 0) or torch.any(torch.isnan(loss)):
                         print()
                         # raise ValueError("wrong value for the loss")
@@ -204,7 +214,7 @@ if __name__ == '__main__':
                             pred = model(input, data.edge_index, data.batch, data.edge_attr)
                         else:
                             pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
-                        train_loss += F.mse_loss(pred[:, 0], data.y.to(device), reduction="sum").item()
+                        train_loss += scaled_mse(pred[:, 0], data.y, reduction="sum").item()
                         train_n_tot += len(data.y)
 
                     lst_train_perf.append(train_loss/train_n_tot)
@@ -220,14 +230,13 @@ if __name__ == '__main__':
                             pred = model(input, data.edge_index, data.batch, data.edge_attr)
                         else:
                             pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
-                        test_loss += F.mse_loss(pred[:, 0], data.y, reduction="sum").item()
-                        test_n_tot += len(data)
+                        test_loss += scaled_mse(pred[:, 0], data.y, reduction="sum").item()
+                        test_n_tot += len(data.y)
 
                     lst_test_perf.append(test_loss/test_n_tot)
-
                     print(
                         f'epoch: {epoch} '
-                        f'lr: {lr_scheduler.get_last_lr()} '
+                        f'lr: {lr_scheduler.get_last_lr()[0]:.8f} '
                         f'loss_train: {train_loss/train_n_tot:.4f} '
                         f'test_loss: {test_loss/test_n_tot:.4f}')
 
@@ -248,16 +257,24 @@ if __name__ == '__main__':
             lst_model_train_perf.append(lst_train_perf)
             lst_model_test_perf.append(lst_test_perf)
 
-        print("Model: " + str(i) + "minimum train loss reached: ",
-              round(np.min(lst_model_train_perf), 4),
-              "indicie: ", np.argmin(lst_model_train_perf)
-              )
+            print("Model: " + str(i) + "minimum train loss reached: ",
+                round(np.min(lst_train_perf), 4),
+                "indicie: ", np.argmin(lst_train_perf)
+                )
 
-        print("Model: " + str(i) + "minimum test  loss reached: ",
-              round(np.min(lst_model_test_perf), 4),
-              "indicie: ", np.argmin(lst_model_train_perf)
-              )
-
+            print("Model: " + str(i) + "minimum test  loss reached: ",
+                round(np.min(lst_train_perf), 4),
+                "indicie: ", np.argmin(lst_train_perf)
+                )
+            plt.clf()
+            plt.plot([50 * k for k in range(int(config["epochs"]/50))], lst_train_perf, label="train loss")
+            plt.plot([50 * k for k in range(int(config["epochs"]/50))], lst_test_perf, label="test loss")
+            plt.xlabel("Number of epochs")
+            plt.ylabel("Loss (MSE)")
+            plt.legend()
+            plt.savefig(fig_dir_path + "/" + str(i) + "_training")
+        
+        
     def test():
         print(f"config: {config}")
         device = 'cpu'
@@ -265,7 +282,7 @@ if __name__ == '__main__':
         print(os.listdir(model_dir_path))
         for model_path in os.listdir(model_dir_path):
             checkpoint = torch.load(model_dir_path + "/" + model_path)
-            model = model_class(dataset.num_features, config["embed_size"], 1, config=config).to(device)
+            model = model_class(train_dataset.num_features, config["embed_size"], 1, config=config).to(device)
             model.load_state_dict(checkpoint["model_state_dict"])
             model.eval()
 
@@ -291,7 +308,7 @@ if __name__ == '__main__':
                 for data in train_loader:
                     data = data.to(device)
                     pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
-                    train_loss += F.mse_loss(pred[:, 0], data.y.to(device), reduction="sum").item()
+                    train_loss += scaled_mse(pred[:, 0], data.y.to(device), reduction="sum").item()
                     train_n_tot += len(data.y)
                     train_pred = np.concatenate((train_pred, pred[:, 0].numpy()))
                     train_energy = np.concatenate((train_energy, data.y.numpy()))
@@ -325,7 +342,7 @@ if __name__ == '__main__':
                 for data in test_loader:
                     data = data.to(device)
                     pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
-                    test_loss += F.mse_loss(pred[:, 0], data.y.to(device), reduction="sum").item()
+                    test_loss += scaled_mse(pred[:, 0], data.y.to(device), reduction="sum").item()
                     test_n_tot += len(data.y)
                     test_pred = np.concatenate((test_pred, pred[:, 0].numpy()))
                     test_energy = np.concatenate((test_energy, data.y.numpy()))
@@ -370,28 +387,38 @@ if __name__ == '__main__':
         pred_test_mean, pred_test_std, true_test_mean = np.array(pred_test_mean), np.array(pred_test_std), np.array(true_test_mean)
 
         plt.clf()
-        plt.errorbar(true_train_mean, pred_train_mean, yerr=pred_train_std, fmt="o")
+        plt.errorbar(true_train_mean, pred_train_mean, yerr=pred_train_std, fmt="o", label="Train")
         plt.plot(true_train_mean, [0 for _ in range(len(true_train_mean))], "k")
-        plt.errorbar(true_test_mean, pred_test_mean, yerr=pred_test_std, fmt="o")
+        plt.errorbar(true_test_mean, pred_test_mean, yerr=pred_test_std, fmt="o", label="Val")
         plt.plot(true_test_mean, [0 for _ in range(len(true_test_mean))], "k")
         plt.title("Results")
         plt.xlabel("ground truth energy (EeV)")
         plt.ylabel("$Residue E_{pr} - E_{th} (EeV)$")
         plt.xlim(0, 4.1)
+        plt.legend()
         plt.savefig(fig_dir_path + "/" + "all")
 
         plt.figure()
-        plt.errorbar(true_train_mean, pred_train_mean/true_train_mean, yerr=pred_train_std/true_train_mean, fmt="o")
+        plt.errorbar(true_train_mean, pred_train_mean/true_train_mean, yerr=pred_train_std/true_train_mean, fmt="o", label="Train")
         plt.plot(true_train_mean, [0 for _ in range(len(true_train_mean))], "k")
-        plt.errorbar(true_test_mean, pred_test_mean/true_test_mean, yerr=pred_test_std/true_test_mean, fmt="o")
+        plt.errorbar(true_test_mean, pred_test_mean/true_test_mean, yerr=pred_test_std/true_test_mean, fmt="o", label="Val")
         plt.plot(true_test_mean, [0 for _ in range(len(true_test_mean))], "k")
-        plt.title("Results on the training set")
+        plt.title("Results")
         plt.xlabel("ground truth energy (EeV)")
         plt.ylabel("$Residue \Delta_{E}/E_{th} $")
         plt.xlim(0, 4.1)
+        plt.legend()
         plt.savefig(fig_dir_path + "/" + "all" + "delta")
 
         plt.show()
+        
+        np.save(fig_dir_path + "/" + "train_pred", pred_train_mean) 
+        np.save(fig_dir_path + "/" + "train_std", pred_train_std) 
+        np.save(fig_dir_path + "/" + "train_true", true_train_mean) 
+        
+        np.save(fig_dir_path + "/" + "test_pred", pred_test_mean) 
+        np.save(fig_dir_path + "/" + "test_std", pred_test_std) 
+        np.save(fig_dir_path + "/" + "test_true", true_test_mean) 
 
     if config["test"]:
         test()

@@ -117,7 +117,7 @@ class TopkGCN(torch.nn.Module):
     def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
         super().__init__()
         self.dropout_rate = config["dropout"]
-        self.ratio = config["ratio"]
+        self.ratio = config["topkratio"]
         self.convblock1 = TopkGCNBlock(in_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)
         self.convblock2 = TopkGCNBlock(h_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)
         self.convblock3 = TopkGCNBlock(h_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)

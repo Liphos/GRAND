@@ -1,6 +1,9 @@
 import numpy as np
 from typing import List, Tuple, Union, Dict
 from scipy.spatial import KDTree
+import torch
+import torch.nn.functional as F
+
 
 
 
@@ -101,3 +104,6 @@ def compute_time_response(efields_all_events):
         tau_arr.append(tau)
     
     return indicie_max_arr, tau_arr
+
+def scaled_mse(pred_labels, true_labels, reduction="mean"):
+    return F.mse_loss(pred_labels/true_labels, torch.ones_like(true_labels), reduction=reduction)
