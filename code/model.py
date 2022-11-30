@@ -25,8 +25,7 @@ class GCN(torch.nn.Module):
         
         self.dropout_rate = config["dropout"]
         
-    def forward(self, batch):
-        x, edge_index = batch.x, batch.edge_index
+    def forward(self, x, edge_index, batch, edge_weight=None):
         h = self.conv1(x, edge_index)
         h_copy = F.relu(h)
         h = F.dropout(h_copy, p=self.dropout_rate, training=self.training)
@@ -38,7 +37,7 @@ class GCN(torch.nn.Module):
         h = F.dropout(h, p=self.dropout_rate, training=self.training)
         h = self.conv4(h, edge_index)
         
-        return self.readout(h, batch=batch.batch)
+        return self.readout(h, batch=batch)
 
 class TopkGAT(torch.nn.Module):
     def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
@@ -122,8 +121,8 @@ class TopkGCN(torch.nn.Module):
         self.convblock2 = TopkGCNBlock(h_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)
         self.convblock3 = TopkGCNBlock(h_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)
         self.convblock4 = TopkGCNBlock(h_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)
-        self.convblock5 = TopkGCNBlock(h_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)
-        self.convblock6 = TopkGCNBlock(h_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)
+        #self.convblock5 = TopkGCNBlock(h_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)
+        #self.convblock6 = TopkGCNBlock(h_feats, h_feats, dropout=self.dropout_rate, ratio=self.ratio)
         
         self.dense1 = torch.nn.Linear(2*h_feats, 4*h_feats)
         self.dense2 = torch.nn.Linear(4*h_feats, num_classes)
@@ -134,18 +133,18 @@ class TopkGCN(torch.nn.Module):
         h2, flat_2, edge_index, edge_weight, batch = self.convblock2(h1, edge_index, batch, edge_weight=edge_weight)
         h3, flat_3, edge_index, edge_weight, batch = self.convblock3(h2, edge_index, batch, edge_weight=edge_weight)
         h4, flat_4, edge_index, edge_weight, batch = self.convblock4(h3, edge_index, batch, edge_weight=edge_weight)
-        h5, flat_5, edge_index, edge_weight, batch = self.convblock5(h4, edge_index, batch, edge_weight=edge_weight)
-        h6, flat_6, edge_index, edge_weight, batch = self.convblock6(h5, edge_index, batch, edge_weight=edge_weight)
-
-        flatten = flat_1 + flat_2 + flat_3 + flat_4 + flat_5 + flat_6
-        #flatten = torch.cat([flat_1, flat_2, flat_3, flat_4, flat_5, flat_6], axis=-1)
+        #h5, flat_5, edge_index, edge_weight, batch = self.convblock5(h4, edge_index, batch, edge_weight=edge_weight)
+        #h6, flat_6, edge_index, edge_weight, batch = self.convblock6(h5, edge_index, batch, edge_weight=edge_weight)
+        
+        flatten = flat_1 + flat_2 + flat_3 + flat_4
+        #flatten = torch.cat([flat_1, flat_2, flat_3, flat_4], axis=-1)
         if torch.any(torch.isnan(flatten)):
             print()
         
-        h = F.relu(self.dense1(F.dropout(flatten, p=self.dropout_rate, training=self.training)))
-        outputs = self.dense2(F.dropout(h, p=self.dropout_rate, training=self.training))
+        h = F.relu(self.dense1(F.dropout(flatten, p=self.dropout_rate)))
+        outputs = self.dense2(F.dropout(h, p=self.dropout_rate))
         
-        return outputs
+        return outputs + 2
 
 class TopkSAGEBlock(torch.nn.Module):
     def __init__(self, in_feats: int, h_feats: int, dropout: float, ratio: float=0.8):

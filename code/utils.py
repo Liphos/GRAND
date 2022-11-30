@@ -105,5 +105,7 @@ def compute_time_response(efields_all_events):
     
     return indicie_max_arr, tau_arr
 
+def scaled_l1(pred_labels, true_labels, reduction="mean"):
+    return F.l1_loss(pred_labels/true_labels, torch.ones_like(true_labels), reduction=reduction)
 def scaled_mse(pred_labels, true_labels, reduction="mean"):
     return F.mse_loss(pred_labels/true_labels, torch.ones_like(true_labels), reduction=reduction)

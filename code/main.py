@@ -5,15 +5,14 @@ import torch
 import torch.nn.functional as F
 
 from create_dataset import GrandDataset, GrandDatasetSignal, GrandDatasetEdgeDist, GrandDatasetNoDense
-from model import TopkGCN, SimpleSignalModel, TopkGAT, TopkSAGE
-from utils import scaled_mse
+from model import TopkGCN, SimpleSignalModel, TopkGAT, TopkSAGE, GCN
+from utils import scaled_mse, scaled_l1
 
 import argparse
 import os
 
 
 if __name__ == '__main__':
-    torch.autograd.set_detect_anomaly(True)
     parser = argparse.ArgumentParser(
                     prog='GNNGrand',
                     description='Train GNN on GRAND data')
@@ -70,6 +69,13 @@ if __name__ == '__main__':
     parser.add_argument("--device",
                         type=str, default='cpu',
                         help="The device to use")
+    parser.add_argument("--loss_fn", 
+                        type=str, default="mse", choices=["mse", "scaled_mse", "scaled_l1"],
+                        help="loss function to use")
+    parser.add_argument("--root", 
+                        type=str, default="./GrandDatasetNoDenseAll",
+                        help="dataset name")
+
 
     config = vars(parser.parse_args())
     """
@@ -110,8 +116,9 @@ if __name__ == '__main__':
         dataset = GrandDatasetSignal().shuffle()
     else:
         
-        dataset = GrandDatasetNoDense()
+        dataset = GrandDatasetNoDense(root=config["root"])
         train_dataset, test_dataset = dataset.train_datasets[int(config["ant_ratio_train"]*5)], dataset.test_datasets[int(config["ant_ratio_test"]*5)]
+
 
     # We don't want to shuffle to keep the same order in the data
     train_loader = tg.loader.DataLoader(
@@ -124,11 +131,20 @@ if __name__ == '__main__':
                     batch_size=config["batch_size"],
                     shuffle=not config["test"]
                     )
+    
+    if config["loss_fn"] == "mse":
+        loss_fn = F.mse_loss
+    elif config["loss_fn"] == "scaled_mse":
+        loss_fn = scaled_mse
+    elif config["loss_fn"] == "scaled_l1":
+        loss_fn = scaled_l1
+    else:
+        raise ValueError("loss function not recognized")
 
     def train():
-        print("Feature size: " + str(train_dataset.num_features) + " features")
         print('The number of labels  is ' + 'len(batch.y)/config["batch_size"]')
         print("config: ", config)
+        print("loss_function: ", loss_fn.__name__)
 
         lst_model_train_perf = []
         lst_model_test_perf = []
@@ -188,9 +204,9 @@ if __name__ == '__main__':
                     else:
                         pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
 
-                    loss = scaled_mse(pred[:, 0], data.y.to(device))
+                    loss = scaled_mse(pred[:, 0], data.y)
                     if torch.any(loss == 0) or torch.any(torch.isnan(loss)):
-                        print()
+                        print("Error loss nul or invalid")
                         # raise ValueError("wrong value for the loss")
                     loss.backward()
                     optimizer.step()
@@ -214,7 +230,7 @@ if __name__ == '__main__':
                             pred = model(input, data.edge_index, data.batch, data.edge_attr)
                         else:
                             pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
-                        train_loss += scaled_mse(pred[:, 0], data.y, reduction="sum").item()
+                        train_loss += loss_fn(pred[:, 0], data.y, reduction="sum").item()
                         train_n_tot += len(data.y)
 
                     lst_train_perf.append(train_loss/train_n_tot)
@@ -230,7 +246,7 @@ if __name__ == '__main__':
                             pred = model(input, data.edge_index, data.batch, data.edge_attr)
                         else:
                             pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
-                        test_loss += scaled_mse(pred[:, 0], data.y, reduction="sum").item()
+                        test_loss += loss_fn(pred[:, 0], data.y, reduction="sum").item()
                         test_n_tot += len(data.y)
 
                     lst_test_perf.append(test_loss/test_n_tot)
@@ -242,6 +258,7 @@ if __name__ == '__main__':
 
                     if config['use_signal']:
                         cnn_embed.train()
+                        
                     model.train()
 
             data_to_save = {'epochs': config["epochs"],
@@ -253,26 +270,27 @@ if __name__ == '__main__':
                 data_to_save['cnn_state_dict'] = cnn_embed.state_dict()
 
             torch.save(data_to_save, model_dir_path + "/" + str(i) + ".pt")
+            
+            if config["epochs"] >50:
+                lst_model_train_perf.append(lst_train_perf)
+                lst_model_test_perf.append(lst_test_perf)
 
-            lst_model_train_perf.append(lst_train_perf)
-            lst_model_test_perf.append(lst_test_perf)
+                print("Model: " + str(i) + "minimum train loss reached: ",
+                    round(np.min(lst_train_perf), 4),
+                    "indicie: ", np.argmin(lst_train_perf)
+                    )
 
-            print("Model: " + str(i) + "minimum train loss reached: ",
-                round(np.min(lst_train_perf), 4),
-                "indicie: ", np.argmin(lst_train_perf)
-                )
-
-            print("Model: " + str(i) + "minimum test  loss reached: ",
-                round(np.min(lst_train_perf), 4),
-                "indicie: ", np.argmin(lst_train_perf)
-                )
-            plt.clf()
-            plt.plot([50 * k for k in range(int(config["epochs"]/50))], lst_train_perf, label="train loss")
-            plt.plot([50 * k for k in range(int(config["epochs"]/50))], lst_test_perf, label="test loss")
-            plt.xlabel("Number of epochs")
-            plt.ylabel("Loss (MSE)")
-            plt.legend()
-            plt.savefig(fig_dir_path + "/" + str(i) + "_training")
+                print("Model: " + str(i) + "minimum test  loss reached: ",
+                    round(np.min(lst_train_perf), 4),
+                    "indicie: ", np.argmin(lst_test_perf)
+                    )
+                plt.clf()
+                plt.plot([50 * k for k in range(int(config["epochs"]/50))], lst_train_perf, label="train loss")
+                plt.plot([50 * k for k in range(int(config["epochs"]/50))], lst_test_perf, label="test loss")
+                plt.xlabel("Number of epochs")
+                plt.ylabel("Loss (MSE)")
+                plt.legend()
+                plt.savefig(fig_dir_path + "/" + str(i) + "_training")
         
         
     def test():
@@ -308,17 +326,17 @@ if __name__ == '__main__':
                 for data in train_loader:
                     data = data.to(device)
                     pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
-                    train_loss += scaled_mse(pred[:, 0], data.y.to(device), reduction="sum").item()
+                    train_loss += loss_fn(pred[:, 0], data.y, reduction="sum").item()
                     train_n_tot += len(data.y)
                     train_pred = np.concatenate((train_pred, pred[:, 0].numpy()))
                     train_energy = np.concatenate((train_energy, data.y.numpy()))
 
-            train_loss_lst.append(train_loss)
+            train_loss_lst.append(train_loss/train_n_tot)
             train_pred_lst.append(train_pred)
 
         train_loss = np.array(train_loss_lst)
         train_pred = np.array(train_pred_lst)
-
+        print("train_loss: ", train_loss)
         for i in range(len(train_pred)):
             plt.clf()
             plt.scatter(train_energy, train_pred[i])
@@ -342,12 +360,12 @@ if __name__ == '__main__':
                 for data in test_loader:
                     data = data.to(device)
                     pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
-                    test_loss += scaled_mse(pred[:, 0], data.y.to(device), reduction="sum").item()
+                    test_loss += loss_fn(pred[:, 0], data.y, reduction="sum").item()
                     test_n_tot += len(data.y)
                     test_pred = np.concatenate((test_pred, pred[:, 0].numpy()))
                     test_energy = np.concatenate((test_energy, data.y.numpy()))
 
-            test_loss_lst.append(test_loss)
+            test_loss_lst.append(test_loss/test_n_tot)
             test_pred_lst.append(test_pred)
 
         test_loss = np.array(test_loss_lst)
@@ -363,12 +381,22 @@ if __name__ == '__main__':
             plt.xlim(0, 4.1)
             plt.savefig(fig_dir_path + "/" + str(i) + "_test")
 
+        """
+        # We only keep from here the best models
+        model_index = np.argsort(test_loss)[:5]
+        lst_model = []
+        for index in model_index:
+            lst_model.append(models[index])
+        models = lst_model
+        train_pred = train_pred[model_index]
+        test_pred = test_pred[model_index]
+        """
         # ## We do the mean of the models ## #
         bins = [0.11 + (i + 1) * (3.99-0.11) / 10 for i in range(10)] 
         ind_bins = np.digitize(train_energy, bins)
         pred_train_mean, pred_train_std, true_train_mean = [], [], []
         for bin in range(len(bins)):
-            indicies = np.where(ind_bins == bin)[0]
+            indicies = np.where(ind_bins == bin)[0] ###TODO adapt to the test after train
             pred_train_mean.append(np.mean(train_pred[:, indicies] - train_energy[indicies]))
             pred_train_std.append(np.sqrt(np.mean(np.std(train_pred[:, indicies], axis=0)**2)))
             true_train_mean.append(np.mean(train_energy[indicies]))
@@ -425,7 +453,7 @@ if __name__ == '__main__':
     else:
         train()
         test()
-
+    print("Finished !")
     """
     X = np.array([50 * i for i in range(int(np.floor((config["epochs"]-1)/50) + 1))])
 
