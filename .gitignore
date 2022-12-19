@@ -1,11 +1,11 @@
 #Ignore Data and the previous models
-GRAND_DATA/*
-GRAND_ML_model/*
-GrandDataset*/*
-*/processed/*
-Figures/*
-wandb/*
-core/Models/*
+GRAND_DATA/
+GRAND_ML_model/
+GrandDataset**/
+*/processed/
+Figures/
+wandb/
+core/Models/
 GrandDatasetSignal/
 slurm_script.sbatch
 .vscode/
