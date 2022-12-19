@@ -11,7 +11,7 @@ class DenseNet(torch.nn.Module):
     def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
         super().__init__()
         self.dropout_rate = config["dropout"]
-        self.dense1 = torch.nn.Linear(2*in_feats, h_feats)
+        self.dense1 = torch.nn.Linear(in_feats, h_feats)
         self.dense2 = torch.nn.Linear(h_feats, h_feats)
         self.dense3 = torch.nn.Linear(h_feats, h_feats)
         self.dense4 = torch.nn.Linear(h_feats, h_feats)
@@ -20,9 +20,9 @@ class DenseNet(torch.nn.Module):
 
     def forward(self, inputs, edge_index, batch, edge_weight=None):
         """equivalent to __call__"""
-        #flatten = tgn.pool.global_max_pool(inputs, batch=batch)
-        flatten = torch.cat([tgn.pool.global_mean_pool(inputs, batch=batch),
-                             tgn.pool.global_max_pool(inputs, batch=batch)], axis=-1)
+        flatten = tgn.pool.global_max_pool(inputs, batch=batch)
+        #flatten = torch.cat([tgn.pool.global_mean_pool(inputs, batch=batch),
+        #                     tgn.pool.global_max_pool(inputs, batch=batch)], axis=-1)
 
         if torch.any(torch.isnan(flatten)):
             print("Nan detected in the prediction")
@@ -51,9 +51,9 @@ class GCNBlock(torch.nn.Module):
         else:
             h_emb = F.relu(h_emb)
 
-        #flat = tgn.pool.global_max_pool(h_emb, batch=batch)
-        flat = torch.cat([tgn.pool.global_mean_pool(h_emb, batch=batch),
-                          tgn.pool.global_max_pool(h_emb, batch=batch)], axis=-1)
+        flat = tgn.pool.global_max_pool(h_emb, batch=batch)
+        #flat = torch.cat([tgn.pool.global_mean_pool(h_emb, batch=batch),
+        #                  tgn.pool.global_max_pool(h_emb, batch=batch)], axis=-1)
 
         return h_emb, flat, edge_index, edge_weight, batch
 

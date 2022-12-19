@@ -233,6 +233,14 @@ if __name__ == '__main__':
             model.train()
             for epoch in range(config["epochs"]):
                 for data in train_loader:
+                    if True:
+                        data_list = data.to_data_list()
+                        for graph in enumerate(data_list):
+                            rand_nb = np.random.random_sample()*0.4 + 0.6
+                            indicies = torch.randperm(len(graph[1].x))[:int(np.round(len(graph[1].x)*rand_nb))]
+                            data_list[graph[0]] = graph[1].subgraph(indicies)
+                        data = tg.data.Batch.from_data_list(data_list)
+
                     data = data.to(device)
                     optimizer.zero_grad()
                     if config["dataset"] == "Signal":
@@ -271,6 +279,13 @@ if __name__ == '__main__':
                     train_loss = 0
                     train_n_tot = 0
                     for data in train_loader:
+                        if True:
+                            data_list = data.to_data_list()
+                            for graph in enumerate(data_list):
+                                rand_nb = np.random.random_sample()*0.4 + 0.6
+                                indicies = torch.randperm(len(graph[1].x))[:int(np.round(len(graph[1].x)*rand_nb))]
+                                data_list[graph[0]] = graph[1].subgraph(indicies)
+                            data = tg.data.Batch.from_data_list(data_list)
                         data = data.to(device)
                         if config["dataset"] == "Signal":
                             reshape_data = data.x[:, :-4].reshape(data.x.shape[0], 768, 3)
@@ -287,7 +302,15 @@ if __name__ == '__main__':
                     test_loss = 0
                     test_n_tot = 0
                     for data in test_loader:
-                        data = data.to(device)
+
+                        if True:
+                            data_list = data.to_data_list()
+                            for graph in enumerate(data_list):
+                                rand_nb = np.random.random_sample()*0.4 + 0.6
+                                indicies = torch.randperm(len(graph[1].x))[:int(np.round(len(graph[1].x)*rand_nb))]
+                                data_list[graph[0]] = graph[1].subgraph(indicies)
+                            data = tg.data.Batch.from_data_list(data_list)
+                            data = data.to(device)
                         if config["dataset"] == "Signal":
                             reshape_data = data.x[:, :-4].reshape(data.x.shape[0], 768, 3)
                             embed = cnn_embed(torch.swapaxes(reshape_data, 1, -1))

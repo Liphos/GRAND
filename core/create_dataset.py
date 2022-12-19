@@ -9,7 +9,7 @@ import core.hdf5fileinout as hdf5io
 import numpy as np
 import torch_geometric as tg
 
-from core.utils import computeNeighbors
+from core.utils import computeNeighbors, computeNeighborsKDTree
 from torch_geometric.data import InMemoryDataset
 from scipy import signal
 import random
@@ -83,7 +83,7 @@ def compute_normalized_antennas(all_antenna_pos, all_antenna_id) -> Dict[str, Li
 
     return antenna_id_to_pos
 
-def compute_edges(antenna_pos:np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def compute_edges(antenna_pos:np.ndarray, has_fix_degree:bool) -> Tuple[np.ndarray, np.ndarray]:
     """Compute the edges of the graph given the positions of the antennas
 
     Args:
@@ -91,14 +91,202 @@ def compute_edges(antenna_pos:np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     Returns:
         Tuple(np.ndarray, np.ndarray): the indicies in the array of the nodes that needs to be connected as well as their distance
     """
-    edge_index, edge_dist = computeNeighbors(antenna_pos)
-    edge_index_mirrored = edge_index[:, [1, 0]]
-    edge_index = np.concatenate((edge_index, edge_index_mirrored), axis=0) #To have the edges in the 2 ways
-    edge_dist = np.concatenate((edge_dist, edge_dist), axis=0) #To have the edges in the 2 ways
-    edge_index, edge_ind = np.unique(edge_index, return_index=True, axis=0) #To remove the duplicates
-    edge_dist = edge_dist[edge_ind]
+    if has_fix_degree:
+        edge_index, edge_dist = computeNeighbors(antenna_pos)
+        edge_index, edge_dist = tg.utils.to_undirected(torch.tensor(edge_index, dtype=torch.long).t().contiguous(), edge_attr=edge_dist, reduce="mean")
+    else:
+        edge_index = computeNeighborsKDTree(antenna_pos)
+        edge_index = tg.utils.to_undirected(torch.tensor(edge_index, dtype=torch.long).t().contiguous())
+        edge_dist = None
 
     return edge_index, edge_dist
+
+
+class GrandDataset(InMemoryDataset):
+    def __init__(self, root= "./GrandDataset", is_core_contained:bool=False, has_fix_degree:bool=False, add_degree:bool=True, max_degree:int=19):
+        self.is_core_contained = is_core_contained
+        self.has_fix_degree = has_fix_degree
+        self.add_degree = add_degree
+        self.max_degree = max_degree
+        self.degree_tranform = tg.transforms.OneHotDegree(max_degree=max_degree)
+        super().__init__(root)
+        self.root = root
+
+        self.train_datasets = {}
+        self.test_datasets = {}
+        for densite in range(11):
+            _train_data, _train_slices = torch.load(self.processed_paths[densite])
+            _test_data, _test_slices = torch.load(self.processed_paths[11 + densite])
+
+            train_dataset = InMemoryDataset()
+            train_dataset.data, train_dataset.slices = _train_data, _train_slices
+            self.train_datasets[densite] = train_dataset
+
+            test_dataset = InMemoryDataset()
+            test_dataset.data, test_dataset.slices = _test_data, _test_slices
+            self.test_datasets[densite] = test_dataset
+
+
+    @property
+    def processed_file_names(self):
+        lst_names_train = [f'train{densite}.pt' for densite in range(11)]
+        lst_names_test = [f'test{densite}.pt' for densite in range(11)]
+        return lst_names_train + lst_names_test
+
+    def process(self):
+        train_graph_lst = {}
+        test_graph_lst = {}
+        for densite in range(11):
+            train_graph_lst[str(densite)] = []
+            test_graph_lst[str(densite)] = []
+
+        PATH_DATA = './GRAND_DATA/GP300Outbox/'
+        PROGENITOR = 'Proton'
+        ZENVAL = '_' + str(74.8)  # 63.0, 74.8, 81.3, 85.0, 87.1
+        list_f = glob.glob(PATH_DATA+'*'+PROGENITOR+'*'+ZENVAL+'*')
+        # list_f = glob.glob(PATH_DATA+'*')
+        print('Number of files = %i' % (len(list_f)))
+        #Parameters for the filter
+        N = 1    # Filter order
+        wn = 0.05  # Cutoff frequency
+        b, A = signal.butter(N, wn, output='ba')
+
+        all_energy = []
+        all_antenna_id = []
+        all_antenna_pos = []
+        all_efield_loc = []
+        for file in tqdm(range(len(list_f))):
+            # We load the files
+            inputfilename = glob.glob(list_f[file] + '/*' + PROGENITOR + '*' + ZENVAL + '*.hdf5')[0]
+            run_info = hdf5io.GetRunInfo(inputfilename)
+            event_name = hdf5io.GetEventName(run_info, 0)
+            antenna_info = hdf5io.GetAntennaInfo(inputfilename, event_name)
+            n_ant = hdf5io.GetNumberOfAntennas(antenna_info) #=len(antenna_info)
+            energy = run_info['Energy'][0]
+            #zenith = 180. - hdf5io.GetEventZenith(run_info, 0)
+            #azimuth = hdf5io.GetEventAzimuth(run_info, 0)-180.
+
+            antenna_id = antenna_info["ID"].value
+            antenna_pos = np.concatenate((antenna_info['X'].value[:, np.newaxis], antenna_info['Y'].value[:, np.newaxis], antenna_info['Z'].value[:, np.newaxis]), axis=-1)
+
+            for ant in range(n_ant):
+                efield_loc = hdf5io.GetAntennaEfield(inputfilename, event_name,
+                                                    str(antenna_id[ant], 'UTF-8'))
+                if ant == 0:
+                    efield_loc_arr = np.zeros((n_ant, ) + efield_loc.shape)
+                    efield_smooth_arr = np.zeros((n_ant, ) + (efield_loc.shape[0], ))
+
+                efield_loc_arr[ant] = efield_loc
+                efield_smooth_arr[ant] = signal.filtfilt(b, A, efield_loc[:, 2])
+
+            all_energy.append(energy)
+            all_antenna_id.append(antenna_id)
+            all_antenna_pos.append(antenna_pos)
+            all_efield_loc.append(efield_loc_arr)
+
+        # We normalize the observations
+        # We normalize the position of the antennas that are shifted from their normal positions
+        antenna_id_to_pos = compute_normalized_antennas(all_antenna_pos, all_antenna_id)
+        if self.is_core_contained:
+            core_ants = set()
+            for key, value in antenna_id_to_pos.items():
+                in_droites = (-2 * value[0] + 4500) < value[1] or (2 * value[0] - 1000) > value[1] or (-2 * value[0] - 8500) > value[1] or (2*value[0] + 12000) < value[1]
+                in_hexa = value[1] > 4800 or value[1] < -1200 or in_droites
+                if in_hexa:
+                    continue
+                core_ants.add(key)
+        else:
+            core_ants = set(antenna_id_to_pos.keys())
+
+        antenna_no_dense, antenna_dense = find_dense_antennas(antenna_id_to_pos)
+        antennas_to_keep = []
+        for densite in range(11):
+            if densite < 5:
+                ants_to_keep = set(antenna_no_dense.keys())
+                key_lst = list(antenna_dense.keys())
+                random.shuffle(key_lst)
+                ants_to_keep.update(key_lst[:int(len(key_lst)*densite/5)])
+            elif densite == 1:
+                ants_to_keep = set(antenna_id_to_pos.keys())
+            else:
+                ants_to_keep = set(antenna_dense.keys())
+                key_lst = list(antenna_no_dense.keys())
+                random.shuffle(key_lst)
+                ants_to_keep.update(key_lst[:int(len(key_lst)*(2 - densite/5))])
+
+            ants_to_keep = ants_to_keep.intersection(core_ants)
+            antennas_to_keep.append(ants_to_keep)
+
+        print("Compute features and find connections for the graphs")
+        for event in tqdm(range(len(all_energy))):
+            #We load the information from the files
+            efield_loc_arr = all_efield_loc[event]
+            antenna_id = all_antenna_id[event]
+            antenna_pos = all_antenna_pos[event]
+            energy = all_energy[event]
+
+            # We want to start at t=0
+            efield_loc_arr[:, :, 0] = efield_loc_arr[:, :, 0] - np.min(efield_loc_arr[:, 0, 0])
+            # ## We compute the features
+
+            time_diff = - (efield_loc_arr[:, :, 0][np.arange(len(efield_loc_arr)), np.argmax(efield_loc_arr[:, :, 2], axis=1)] - efield_loc_arr[:, :, 0][np.arange(len(efield_loc_arr)), np.argmin(efield_loc_arr[:, :, 2], axis=1)])
+            peak_to_peak_energy = np.max(efield_loc_arr[:, :, 1:], axis=1) - np.min(efield_loc_arr[:, :, 1:], axis=1)
+            peak_to_peak_energy_first = np.argmax(efield_loc_arr[:, :, 1:], axis=1)
+
+            # we filter the signal in a smoother version and recompute features
+            efield_smooth_arr = np.array([signal.filtfilt(b, A, efield_loc_arr[ant, :, 2]) for ant in range(len(efield_loc_arr))])
+
+            time_diff_sm = - (efield_loc_arr[:, :, 0][np.arange(len(efield_smooth_arr)), np.argmax(efield_smooth_arr, axis=1)] - efield_loc_arr[:, :, 0][np.arange(len(efield_smooth_arr)), np.argmin(efield_smooth_arr, axis=1)])
+            peak_to_peak_energy_sm = np.expand_dims(np.max(efield_smooth_arr, axis=1) - np.min(efield_smooth_arr, axis=1), axis=-1)
+            peak_to_peak_energy_first_sm = np.expand_dims(np.argmax(efield_smooth_arr, axis=1), axis=-1)
+
+            antenna_pos_corr = np.array([antenna_id_to_pos[id] for id in antenna_id])
+
+            obs = np.concatenate(
+                                (antenna_pos/10000,
+                                (((peak_to_peak_energy) ** (1/5)) / 8),
+                                (((peak_to_peak_energy_sm) ** (1/5)) /8),
+                                efield_loc_arr[:, :, 0][np.expand_dims(np.arange(len(efield_loc_arr)), axis=-1), peak_to_peak_energy_first]/50_000,
+                                efield_loc_arr[:, :, 0][np.expand_dims(np.arange(len(efield_loc_arr)), axis=-1), peak_to_peak_energy_first_sm]/50_000,
+                                np.expand_dims(time_diff, axis=-1)/500,
+                                np.expand_dims(time_diff_sm, axis=-1)/500,
+                                ), axis=-1)
+
+            is_test = (random.random() < 0.2)
+            for densite in range(11):
+                ants_to_keep = np.array([True if id in antennas_to_keep[densite] else False for id in antenna_id])
+                edge_index, _ = compute_edges(antenna_pos_corr[ants_to_keep], self.has_fix_degree)
+                G = tg.data.Data(
+                    x=torch.tensor(obs[ants_to_keep], dtype=torch.float32),
+                    edge_index=edge_index,
+                    y=torch.tensor(energy, dtype=torch.float32)
+                    )
+
+                if self.add_degree:
+                    G = self.degree_tranform(G)
+
+                if is_test:
+                    test_graph_lst[str(densite)].append(G)
+                else:
+                    train_graph_lst[str(densite)].append(G)
+
+        """
+        print(len(edge_index), edge_index)
+        fig = plt.figure()
+        ax = plt.axes(projection="3d")
+        ax.scatter3D(antenna_pos[:, 0], antenna_pos[:, 1], antenna_pos[:, 2], c=antenna_pos[:, 1], cmap='cividis')
+        plt.title("Antennas positions")
+        plt.xlabel("X")
+        plt.ylabel("Z")
+        """
+        for densite in range(11):
+            train_data, train_slices = self.collate(train_graph_lst[str(densite)])
+            torch.save((train_data, train_slices), self.processed_paths[densite])
+            print("Train dataset saved to: ", self.processed_paths[densite])
+
+            test_data, test_slices = self.collate(test_graph_lst[str(densite)])
+            torch.save((test_data, test_slices), self.processed_paths[11 + densite])
+            print("Test dataset saved to: ", self.processed_paths[11 + densite])
 
 
 class GrandDatasetAllSize(InMemoryDataset):
@@ -244,187 +432,6 @@ class GrandDatasetAllSize(InMemoryDataset):
         torch.save((test_data, test_slices), self.processed_paths[1])
         print("Test dataset saved to: ", self.processed_paths[1])
 
-class GrandDataset(InMemoryDataset):
-    def __init__(self, root= "./GrandDataset", is_core_contained=False):
-        self.is_core_contained = is_core_contained
-        super().__init__(root)
-        self.root = root
-
-        self.train_datasets = {}
-        self.test_datasets = {}
-        for densite in range(11):
-            _train_data, _train_slices = torch.load(self.processed_paths[densite])
-            _test_data, _test_slices = torch.load(self.processed_paths[11 + densite])
-
-            train_dataset = InMemoryDataset()
-            train_dataset.data, train_dataset.slices = _train_data, _train_slices
-            self.train_datasets[densite] = train_dataset
-
-            test_dataset = InMemoryDataset()
-            test_dataset.data, test_dataset.slices = _test_data, _test_slices
-            self.test_datasets[densite] = test_dataset
-
-
-    @property
-    def processed_file_names(self):
-        lst_names_train = [f'train{densite}.pt' for densite in range(11)]
-        lst_names_test = [f'test{densite}.pt' for densite in range(11)]
-        return lst_names_train + lst_names_test
-
-    def process(self):
-        train_graph_lst = {}
-        test_graph_lst = {}
-        for densite in range(11):
-            train_graph_lst[str(densite)] = []
-            test_graph_lst[str(densite)] = []
-
-        PATH_DATA = './GRAND_DATA/GP300Outbox/'
-        PROGENITOR = 'Proton'
-        ZENVAL = '_' + str(74.8)  # 63.0, 74.8, 81.3, 85.0, 87.1
-        list_f = glob.glob(PATH_DATA+'*'+PROGENITOR+'*'+ZENVAL+'*')
-        # list_f = glob.glob(PATH_DATA+'*')
-        print('Number of files = %i' % (len(list_f)))
-        #Parameters for the filter
-        N = 1    # Filter order
-        wn = 0.05  # Cutoff frequency
-        b, A = signal.butter(N, wn, output='ba')
-
-        all_energy = []
-        all_antenna_id = []
-        all_antenna_pos = []
-        all_efield_loc = []
-        for file in tqdm(range(len(list_f))):
-            # We load the files
-            inputfilename = glob.glob(list_f[file] + '/*' + PROGENITOR + '*' + ZENVAL + '*.hdf5')[0]
-            run_info = hdf5io.GetRunInfo(inputfilename)
-            event_name = hdf5io.GetEventName(run_info, 0)
-            antenna_info = hdf5io.GetAntennaInfo(inputfilename, event_name)
-            n_ant = hdf5io.GetNumberOfAntennas(antenna_info) #=len(antenna_info)
-            energy = run_info['Energy'][0]
-            zenith = 180. - hdf5io.GetEventZenith(run_info, 0)
-            azimuth = hdf5io.GetEventAzimuth(run_info, 0)-180.
-
-            antenna_id = antenna_info["ID"].value
-            antenna_pos = np.concatenate((antenna_info['X'].value[:, np.newaxis], antenna_info['Y'].value[:, np.newaxis], antenna_info['Z'].value[:, np.newaxis]), axis=-1)
-
-            for ant in range(n_ant):
-                efield_loc = hdf5io.GetAntennaEfield(inputfilename, event_name,
-                                                    str(antenna_id[ant], 'UTF-8'))
-                if ant == 0:
-                    efield_loc_arr = np.zeros((n_ant, ) + efield_loc.shape)
-                    efield_smooth_arr = np.zeros((n_ant, ) + (efield_loc.shape[0], ))
-
-                efield_loc_arr[ant] = efield_loc
-                efield_smooth_arr[ant] = signal.filtfilt(b, A, efield_loc[:, 2])
-
-            all_energy.append(energy)
-            all_antenna_id.append(antenna_id)
-            all_antenna_pos.append(antenna_pos)
-            all_efield_loc.append(efield_loc_arr)
-
-        # We normalize the observations
-        # We normalize the position of the antennas that are shifted from their normal positions
-        antenna_id_to_pos = compute_normalized_antennas(all_antenna_pos, all_antenna_id)
-        if self.is_core_contained:
-            core_ants = set()
-            for key, value in antenna_id_to_pos.items():
-                in_droites = (-2 * value[0] + 4500) < value[1] or (2 * value[0] - 1000) > value[1] or (-2 * value[0] - 8500) > value[1] or (2*value[0] + 12000) < value[1]
-                in_hexa = value[1] > 4800 or value[1] < -1200 or in_droites
-                if in_hexa:
-                    continue
-                core_ants.add(key)
-        else:
-            core_ants = set(antenna_id_to_pos.keys())
-
-        antenna_no_dense, antenna_dense = find_dense_antennas(antenna_id_to_pos)
-        antennas_to_keep = []
-        for densite in range(11):
-            if densite < 5:
-                ants_to_keep = set(antenna_no_dense.keys())
-                key_lst = list(antenna_dense.keys())
-                random.shuffle(key_lst)
-                ants_to_keep.update(key_lst[:int(len(key_lst)*densite/5)])
-            elif densite == 1:
-                ants_to_keep = set(antenna_id_to_pos.keys())
-            else:
-                ants_to_keep = set(antenna_dense.keys())
-                key_lst = list(antenna_no_dense.keys())
-                random.shuffle(key_lst)
-                ants_to_keep.update(key_lst[:int(len(key_lst)*(2 - densite/5))])
-
-            ants_to_keep = ants_to_keep.intersection(core_ants)
-            antennas_to_keep.append(ants_to_keep)
-
-        print("Compute features and find connections for the graphs")
-        for event in tqdm(range(len(all_energy))):
-            #We load the information from the files
-            efield_loc_arr = all_efield_loc[event]
-            antenna_id = all_antenna_id[event]
-            antenna_pos = all_antenna_pos[event]
-            energy = all_energy[event]
-
-            # We want to start at t=0
-            efield_loc_arr[:, :, 0] = efield_loc_arr[:, :, 0] - np.min(efield_loc_arr[:, 0, 0])
-            # ## We compute the features
-
-            time_diff = - (efield_loc_arr[:, :, 0][np.arange(len(efield_loc_arr)), np.argmax(efield_loc_arr[:, :, 2], axis=1)] - efield_loc_arr[:, :, 0][np.arange(len(efield_loc_arr)), np.argmin(efield_loc_arr[:, :, 2], axis=1)])
-            peak_to_peak_energy = np.max(efield_loc_arr[:, :, 1:], axis=1) - np.min(efield_loc_arr[:, :, 1:], axis=1)
-            peak_to_peak_energy_first = np.argmax(efield_loc_arr[:, :, 1:], axis=1)
-
-            # we filter the signal in a smoother version and recompute features
-            efield_smooth_arr = np.array([signal.filtfilt(b, A, efield_loc_arr[ant, :, 2]) for ant in range(len(efield_loc_arr))])
-
-            time_diff_sm = - (efield_loc_arr[:, :, 0][np.arange(len(efield_smooth_arr)), np.argmax(efield_smooth_arr, axis=1)] - efield_loc_arr[:, :, 0][np.arange(len(efield_smooth_arr)), np.argmin(efield_smooth_arr, axis=1)])
-            peak_to_peak_energy_sm = np.expand_dims(np.max(efield_smooth_arr, axis=1) - np.min(efield_smooth_arr, axis=1), axis=-1)
-            peak_to_peak_energy_first_sm = np.expand_dims(np.argmax(efield_smooth_arr, axis=1), axis=-1)
-
-            antenna_pos_corr = np.array([antenna_id_to_pos[id] for id in antenna_id])
-
-            obs = np.concatenate(
-                                (antenna_pos/10000,
-                                (((peak_to_peak_energy) ** (1/5)) / 8),
-                                (((peak_to_peak_energy_sm) ** (1/5)) /8),
-                                efield_loc_arr[:, :, 0][np.expand_dims(np.arange(len(efield_loc_arr)), axis=-1), peak_to_peak_energy_first]/50_000,
-                                efield_loc_arr[:, :, 0][np.expand_dims(np.arange(len(efield_loc_arr)), axis=-1), peak_to_peak_energy_first_sm]/50_000,
-                                np.expand_dims(time_diff, axis=-1)/500,
-                                np.expand_dims(time_diff_sm, axis=-1)/500,
-                                ), axis=-1)
-
-            is_test = (random.random() < 0.2)
-            for densite in range(11):
-                ants_to_keep = np.array([True if id in antennas_to_keep[densite] else False for id in antenna_id])
-                edge_index, edge_dist = compute_edges(antenna_pos_corr[ants_to_keep])
-
-                G = tg.data.Data(
-                    x=torch.tensor(obs[ants_to_keep], dtype=torch.float32),
-                    edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
-                    y=torch.tensor(energy, dtype=torch.float32)
-                    )
-
-                if is_test:
-                    test_graph_lst[str(densite)].append(G)
-                else:
-                    train_graph_lst[str(densite)].append(G)
-
-        """
-        print(len(edge_index), edge_index)
-        fig = plt.figure()
-        ax = plt.axes(projection="3d")
-        ax.scatter3D(antenna_pos[:, 0], antenna_pos[:, 1], antenna_pos[:, 2], c=antenna_pos[:, 1], cmap='cividis')
-        plt.title("Antennas positions")
-        plt.xlabel("X")
-        plt.ylabel("Z")
-        """
-        for densite in range(11):
-            train_data, train_slices = self.collate(train_graph_lst[str(densite)])
-            torch.save((train_data, train_slices), self.processed_paths[densite])
-            print("Train dataset saved to: ", self.processed_paths[densite])
-
-            test_data, test_slices = self.collate(test_graph_lst[str(densite)])
-            torch.save((test_data, test_slices), self.processed_paths[11 + densite])
-            print("Test dataset saved to: ", self.processed_paths[11 + densite])
-
-
 
 # Dataset Containing the raw signals
 
@@ -536,6 +543,6 @@ class GrandDatasetSignal(InMemoryDataset):
 
 
 if __name__ == '__main__':
-    dataset = GrandDataset("./GrandDatasetCoreNoSE", is_core_contained=True)
+    dataset = GrandDataset("./GrandDatasetOHDeg", is_core_contained=False)
     train_dataset = dataset.train_datasets[5]
     train_dataset

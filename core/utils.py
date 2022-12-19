@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 
 
-def computeNeighborsKDTree(lstPositions: Union[List[Tuple[float]], np.ndarray], distance:float=2)-> np.ndarray:
+def computeNeighborsKDTree(lstPositions: Union[List[Tuple[float]], np.ndarray], distance:float=1500)-> np.ndarray:
     """Create graph in O(Nlog(N))
 
     Args:
@@ -19,7 +19,8 @@ def computeNeighborsKDTree(lstPositions: Union[List[Tuple[float]], np.ndarray], 
     """
     lstPositions = np.array(lstPositions)
     tree_node = KDTree(lstPositions)
-    pairs = tree_node.query_pairs(distance)
+    pairs = tree_node.query_pairs(distance, output_type='ndarray')
+
     return pairs
 
 def computeNeighbors(lstPositions: Union[List[Tuple[float]], np.ndarray], n_closest:int=3) -> np.ndarray:
@@ -44,15 +45,15 @@ def computeNeighbors(lstPositions: Union[List[Tuple[float]], np.ndarray], n_clos
                     if dist < close_point[index]:
                         close_point[index+1:] = close_point[index:-1]
                         close_point_index[index+1:] = close_point_index[index:-1]
-                                            
+
                         close_point[index] = dist
                         close_point_index[index] = antenna_close
                         break
-        
+
         for incr in range(len(close_point_index)):
             closest_points.append([antenna, close_point_index[incr]])
             all_dist.append(close_point[incr])
-    
+
     indicies = [i for i in range(len(closest_points))]
     indicies.sort(key=lambda x:closest_points[0])
     return np.array(closest_points)[indicies], np.array(all_dist)[indicies]
@@ -68,7 +69,7 @@ def compute_peak2peak(efields_all_events):
         peak_to_peak_all.append(peak_to_peak_energy)
         peak_to_peak_arr[i] = [np.max(peak_to_peak_energy, axis=0), np.min(peak_to_peak_energy, axis=0)]
         peak_to_peak_ind[i] = [np.argmax(peak_to_peak_energy, axis=0), np.argmin(peak_to_peak_energy, axis=0)]
-        
+
     return peak_to_peak_all, peak_to_peak_arr, peak_to_peak_ind
 
 def compute_time_diff(efields_all_events):
@@ -81,13 +82,13 @@ def compute_time_diff(efields_all_events):
 
 
     for i in range(len(efields_all_events)):
-        
+
         time_diff = - (efields_all_events[i][:, :, 0][np.arange(len(efields_all_events[i])), np.argmax(efields_all_events[i][:, :, 2], axis=1)] - efields_all_events[i][:, :, 0][np.arange(len(efields_all_events[i])), np.argmin(efields_all_events[i][:, :, 2], axis=1)])
 
         time_diff_peak[i] = [np.max(time_diff, axis=0), np.min(time_diff, axis=0)]
         time_diff_peak_index[i] = [np.argmax(time_diff, axis=0), np.argmin(time_diff, axis=0)]
         time_diff_all.append(time_diff)
-        
+
     return time_diff_all, time_diff_peak, time_diff_peak_index, smooth_time_diff_peak, smooth_time_diff_peak_index
 
 def compute_time_response(efields_all_events):
@@ -99,10 +100,10 @@ def compute_time_response(efields_all_events):
         for ant in range(len(efields_all_events[event])):
             indicie_max.append(np.argmax(efields_all_events[event][ant, :, 2], axis=0))
             tau.append(np.where(efields_all_events[event][ant, :, 2]>0.1*efields_all_events[event][ant, int(indicie_max[-1]), 2])[0][0])
-            
+
         indicie_max_arr.append(indicie_max)
         tau_arr.append(tau)
-    
+
     return indicie_max_arr, tau_arr
 
 def scaled_l1(pred_labels, true_labels, reduction="mean"):

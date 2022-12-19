@@ -1,0 +1,85 @@
+{
+    "os": "Linux-5.15.0-56-generic-x86_64-with-Ubuntu-22.04-jammy",
+    "python": "3.7.15",
+    "heartbeatAt": "2022-12-15T15:52:32.269638",
+    "startedAt": "2022-12-15T15:52:32.151501",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--model_name=to_test",
+        "--dataset=Classic",
+        "--algo=GatedGCN",
+        "--root=GrandDatasetNoScaledNoEdge/",
+        "--embed_size=64",
+        "--num_layers=4",
+        "--test"
+    ],
+    "state": "running",
+    "program": "/volatile/home/gl271980/Documents/grand/core/main.py",
+    "codePath": "core/main.py",
+    "git": {
+        "remote": "Liphs@github.com:Liphos/GRAND.git",
+        "commit": "7a0b23e43eb697e96bd29532d54e476a0474c8b2"
+    },
+    "email": "guillaume.levy@cea.fr",
+    "root": "/volatile/home/gl271980/Documents/grand",
+    "host": "is231304",
+    "username": "gl271980",
+    "executable": "/volatile/home/gl271980/.virtualenvs/grand/bin/python",
+    "cpu_count": 4,
+    "cpu_count_logical": 8,
+    "cpu_freq": {
+        "current": 2754.0947499999997,
+        "min": 800.0,
+        "max": 3600.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2700.0,
+            "min": 800.0,
+            "max": 3600.0
+        },
+        {
+            "current": 2912.986,
+            "min": 800.0,
+            "max": 3600.0
+        },
+        {
+            "current": 3055.362,
+            "min": 800.0,
+            "max": 3600.0
+        },
+        {
+            "current": 2700.0,
+            "min": 800.0,
+            "max": 3600.0
+        },
+        {
+            "current": 2700.0,
+            "min": 800.0,
+            "max": 3600.0
+        },
+        {
+            "current": 3070.855,
+            "min": 800.0,
+            "max": 3600.0
+        },
+        {
+            "current": 2700.0,
+            "min": 800.0,
+            "max": 3600.0
+        },
+        {
+            "current": 3029.042,
+            "min": 800.0,
+            "max": 3600.0
+        }
+    ],
+    "disk": {
+        "total": 97.87200164794922,
+        "used": 24.46734619140625
+    },
+    "memory": {
+        "total": 31.215469360351562
+    }
+}
