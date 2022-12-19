@@ -1,7 +1,7 @@
 #Ignore Data and the previous models
 GRAND_DATA/
 GRAND_ML_model/
-*Dataset*
+GrandDataset*/
 Figures/
 wandb/
 Models/
