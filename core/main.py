@@ -44,14 +44,14 @@ def parser_to_config():
                         type=str, default='cpu',
                         help="The device to use")
     parser.add_argument("--dropout",
-                        type=float, default=0.2,
+                        type=float, default=0,
                         help="The dropout rate")
     parser.add_argument("--d_wandb",
                         action='store_true', default=False,
                         help="Don't create a run on wandb. "
                              "It is set to true if the run is a test run")
     parser.add_argument("--embed_size",
-                        type=int, default=16,
+                        type=int, default=64,
                         help="The size of the embedding")
     parser.add_argument("--epochs",
                         type=int, default=1000,
@@ -59,6 +59,9 @@ def parser_to_config():
     parser.add_argument("--fig_dir_name",
                         type=str, default=None,
                         help="Use to save the figures with a different name than the model name")
+    parser.add_argument("--keep_best_models",
+                        action="store_true", default=False,
+                        help="Keep the 5 best models for the testing")
     parser.add_argument("--loss_fn",
                         type=str, default="mse", choices=["mse", "scaled_mse", "scaled_l1"],
                         help="loss function to use")
@@ -89,6 +92,9 @@ def parser_to_config():
     parser.add_argument("--topkratio",
                         type=float, default=0.8,
                         help="The ratio to use for the topk pooling")
+    parser.add_argument("--not_drop_nodes",
+                        action='store_true', default=False,
+                        help="Train on the whole graph instead of dropiing nodes randomly")
     parser.add_argument("--verbose_t",
                         type=int, default=50,
                         help="The time between each test during training")
@@ -166,12 +172,14 @@ if __name__ == '__main__':
     if not config["d_wandb"] or not config["test"]:
         wandb.init(project="GNN", config=config)
     # matplotlib.use(config["matplotlib_gui"])
-    if config["seed"] == 0:
+    if config["seed"] != 0:
         torch.manual_seed(config["seed"])
         np.random.seed(seed=config["seed"])
 
     model_dir_path = "./core/Models/" + config["model_name"]
     model_class = algorithm_from_name(config["algo"])
+
+    #Create folders if they don't exist
     if not os.path.exists(model_dir_path):
         os.mkdir(model_dir_path)
 
@@ -194,7 +202,6 @@ if __name__ == '__main__':
         dataset = GrandDataset(root=config["root"])
         train_dataset = dataset.train_datasets[int(config["ant_ratio_train"]*5)]
         test_dataset = dataset.test_datasets[int(config["ant_ratio_test"]*5)]
-
     else:
         raise ValueError("This dataset don't exist")
 
@@ -233,7 +240,7 @@ if __name__ == '__main__':
             model.train()
             for epoch in range(config["epochs"]):
                 for data in train_loader:
-                    if True:
+                    if not config["not_drop_nodes"]:
                         data_list = data.to_data_list()
                         for graph in enumerate(data_list):
                             rand_nb = np.random.random_sample()*0.4 + 0.6
@@ -279,7 +286,7 @@ if __name__ == '__main__':
                     train_loss = 0
                     train_n_tot = 0
                     for data in train_loader:
-                        if True:
+                        if not config["not_drop_nodes"]:
                             data_list = data.to_data_list()
                             for graph in enumerate(data_list):
                                 rand_nb = np.random.random_sample()*0.4 + 0.6
@@ -302,8 +309,7 @@ if __name__ == '__main__':
                     test_loss = 0
                     test_n_tot = 0
                     for data in test_loader:
-
-                        if True:
+                        if not config["not_drop_nodes"]:
                             data_list = data.to_data_list()
                             for graph in enumerate(data_list):
                                 rand_nb = np.random.random_sample()*0.4 + 0.6
@@ -473,7 +479,7 @@ if __name__ == '__main__':
 
 
         # We only keep from here the best models
-        if False:
+        if config["keep_best_models"]:
             model_index = np.argsort(test_loss)[:5]
             lst_model = []
             for index in model_index:

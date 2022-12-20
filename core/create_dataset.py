@@ -9,7 +9,7 @@ import core.hdf5fileinout as hdf5io
 import numpy as np
 import torch_geometric as tg
 
-from core.utils import computeNeighbors, computeNeighborsKDTree
+from core.utils import compute_neighbors, compute_neighbor_kdree
 from torch_geometric.data import InMemoryDataset
 from scipy import signal
 import random
@@ -92,10 +92,10 @@ def compute_edges(antenna_pos:np.ndarray, has_fix_degree:bool) -> Tuple[np.ndarr
         Tuple(np.ndarray, np.ndarray): the indicies in the array of the nodes that needs to be connected as well as their distance
     """
     if has_fix_degree:
-        edge_index, edge_dist = computeNeighbors(antenna_pos)
+        edge_index, edge_dist = compute_neighbors(antenna_pos)
         edge_index, edge_dist = tg.utils.to_undirected(torch.tensor(edge_index, dtype=torch.long).t().contiguous(), edge_attr=edge_dist, reduce="mean")
     else:
-        edge_index = computeNeighborsKDTree(antenna_pos)
+        edge_index = compute_neighbor_kdree(antenna_pos)
         edge_index = tg.utils.to_undirected(torch.tensor(edge_index, dtype=torch.long).t().contiguous())
         edge_dist = None
 
@@ -519,7 +519,7 @@ class GrandDatasetSignal(InMemoryDataset):
             obs_lst.append(obs)
             label_lst.append(energy)
 
-            edge_index,_ = computeNeighbors(antenna_pos_corr)
+            edge_index,_ = compute_neighbors(antenna_pos_corr)
             edge_index = np.array(list(edge_index)) #Transform in array
             edge_index_mirrored = edge_index[:, [1, 0]]
             edge_index = np.concatenate((edge_index, edge_index_mirrored), axis=0) #To have the edges in the 2 ways

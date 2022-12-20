@@ -1,5 +1,5 @@
 #Ignore Data and the previous models
-GRAND_DATA/
+GRAND_DATA/GP300Outbox
 GRAND_ML_model/
 GrandDataset**/
 */processed/

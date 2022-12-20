@@ -3,7 +3,7 @@
 import torch
 import torch.nn.functional as F
 
-from torch_geometric.nn import GCNConv, GATv2Conv, SAGEConv, GatedGraphConv
+from torch_geometric.nn import GCNConv, GatedGraphConv
 import torch_geometric.nn as tgn
 
 class DenseNet(torch.nn.Module):
@@ -11,11 +11,10 @@ class DenseNet(torch.nn.Module):
     def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
         super().__init__()
         self.dropout_rate = config["dropout"]
-        self.dense1 = torch.nn.Linear(in_feats, h_feats)
-        self.dense2 = torch.nn.Linear(h_feats, h_feats)
-        self.dense3 = torch.nn.Linear(h_feats, h_feats)
-        self.dense4 = torch.nn.Linear(h_feats, h_feats)
-        self.dense5 = torch.nn.Linear(h_feats, num_classes)
+        self.num_layers = config["num_layers"]-2
+        self.dense_in = torch.nn.Linear(in_feats, h_feats)
+        self.dense = torch.nn.ModuleList([torch.nn.Linear(h_feats, h_feats) for _ in range(self.num_layers)])
+        self.dense_out = torch.nn.Linear(h_feats, num_classes)
 
 
     def forward(self, inputs, edge_index, batch, edge_weight=None):
@@ -27,11 +26,10 @@ class DenseNet(torch.nn.Module):
         if torch.any(torch.isnan(flatten)):
             print("Nan detected in the prediction")
 
-        h_emb = F.relu(self.dense1(flatten))
-        h_emb = F.relu(self.dense2(F.dropout(h_emb, p=self.dropout_rate)))
-        h_emb = F.relu(self.dense3(F.dropout(h_emb, p=self.dropout_rate)))
-        h_emb = F.relu(self.dense4(F.dropout(h_emb, p=self.dropout_rate)))
-        outputs = self.dense5(F.dropout(h_emb, p=self.dropout_rate))
+        h_emb = F.relu(self.dense_in(flatten))
+        for layer in self.dense:
+            h_emb = F.relu(layer(F.dropout(h_emb, p=self.dropout_rate)))
+        outputs = self.dense_out(F.dropout(h_emb, p=self.dropout_rate))
 
         return outputs
 
@@ -66,7 +64,7 @@ class GCN(torch.nn.Module):
         self.convinput = GCNBlock(in_feats, h_feats)
         self.convblocks = torch.nn.ModuleList([GCNBlock(h_feats, h_feats, add_residue=True) for _ in range(self.num_layers)])
 
-        self.dense1 = torch.nn.Linear(2*h_feats, 4*h_feats)
+        self.dense1 = torch.nn.Linear(h_feats, 4*h_feats)
         self.dense2 = torch.nn.Linear(4*h_feats, num_classes)
 
 
@@ -89,66 +87,6 @@ class GCN(torch.nn.Module):
 
         h_emb = F.relu(self.dense1(F.dropout(flatten, p=self.dropout_rate)))
         outputs = self.dense2(F.dropout(h_emb, p=self.dropout_rate))
-
-        return outputs
-
-
-class TopkGAT(torch.nn.Module):
-    def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
-        super().__init__()
-        self.dropout_rate = config["dropout"]
-
-        self.conv1 = GATv2Conv(in_feats, h_feats, dropout=self.dropout_rate)
-        self.pool1 = tgn.pool.TopKPooling(h_feats, ratio=0.8)
-        self.batch_norm1 = tgn.norm.BatchNorm(h_feats)
-
-        self.conv2 = GATv2Conv(h_feats, h_feats, dropout=self.dropout_rate)
-        self.pool2 = tgn.pool.TopKPooling(h_feats, ratio=0.8)
-        self.batch_norm2 = tgn.norm.BatchNorm(h_feats)
-
-        self.conv3 = GATv2Conv(h_feats, h_feats, dropout=self.dropout_rate)
-        self.pool3 = tgn.pool.TopKPooling(h_feats, ratio=0.8)
-        self.batch_norm3 = tgn.norm.BatchNorm(h_feats)
-
-        self.conv4 = GATv2Conv(h_feats, h_feats, dropout=self.dropout_rate)
-        self.pool4 = tgn.pool.TopKPooling(h_feats, ratio=0.8)
-        self.batch_norm4 = tgn.norm.BatchNorm(h_feats)
-
-        self.dense1 = torch.nn.Linear(8*h_feats, 4*h_feats)
-        self.dense2 = torch.nn.Linear(4*h_feats, num_classes)
-
-
-    def forward(self, x, edge_index, batch):
-        """equivalent to __call__"""
-        h = F.relu(self.batch_norm1(self.conv1(x, edge_index)))
-        h1, edge_index, _, batch, _, _ = self.pool1(h, edge_index, batch=batch) ###Relu before
-
-        flat_1 = torch.cat([tgn.pool.global_add_pool(h1, batch=batch), tgn.pool.global_max_pool(h1, batch=batch)], axis=-1)
-
-        h = F.relu(self.batch_norm2(self.conv2(h1, edge_index)))
-        h2, edge_index, _, batch, _, _  = self.pool2(h, edge_index, batch=batch)
-
-        flat_2 = torch.cat([tgn.pool.global_add_pool(h2, batch=batch), tgn.pool.global_max_pool(h2, batch=batch)], axis=-1)
-
-        h = F.relu(self.batch_norm3(self.conv3(h2, edge_index)))
-        h3, edge_index, _, batch, _, _  = self.pool3(h, edge_index, batch=batch)
-
-        flat_3 = torch.cat([tgn.pool.global_add_pool(h3, batch=batch), tgn.pool.global_max_pool(h3, batch=batch)], axis=-1)
-
-        h = F.relu(self.batch_norm4(self.conv4(h3, edge_index)))
-        if torch.any(torch.isnan(self.pool4(h, edge_index, batch=batch)[0])):
-            print()
-        h4, edge_index, _, batch, _, _  = self.pool4(h, edge_index, batch=batch)
-
-        flat_4 = torch.cat([tgn.pool.global_add_pool(h4, batch=batch), tgn.pool.global_max_pool(h4, batch=batch)], axis=-1)
-
-        #flatten = flat_1 + flat_2 + flat_3 + flat_4
-        flatten = torch.cat([flat_1, flat_2, flat_3, flat_4], axis=-1)
-        if torch.any(torch.isnan(flatten)):
-            print()
-
-        h = F.relu(self.dense1(F.dropout(flatten, p=self.dropout_rate, training=self.training)))
-        outputs = self.dense2(F.dropout(h, p=self.dropout_rate, training=self.training))
 
         return outputs
 
@@ -181,6 +119,7 @@ class TopkGCNBlock(torch.nn.Module):
         return h_emb, flat, edge_index, edge_weight, batch
 
 class TopkGCN(torch.nn.Module):
+    """GCN Hierarchical architecture with topk pooling"""
     def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
         super().__init__()
         self.dropout_rate = config["dropout"]
@@ -242,54 +181,8 @@ class GatedGCN(torch.nn.Module):
 
         return outputs
 
-class TopkSAGEBlock(torch.nn.Module):
-    def __init__(self, in_feats: int, h_feats: int, dropout: float, ratio: float=0.8):
-        super().__init__()
-        self.conv = SAGEConv(in_feats, h_feats, dropout=dropout)
-        self.pool = tgn.pool.TopKPooling(h_feats, ratio=ratio)
-        self.batch_norm = tgn.norm.BatchNorm(h_feats)
-
-    def forward(self, x, edge_index, batch):
-        """equivalent to __call__"""
-        h = F.relu(self.batch_norm(self.conv(x, edge_index)))
-        h, edge_index, _, batch, _, _ = self.pool(h, edge_index, batch=batch) ###Relu before
-
-        flat_1 = torch.cat([tgn.pool.global_add_pool(h, batch=batch), tgn.pool.global_max_pool(h, batch=batch)], axis=-1)
-
-        return h, flat_1, edge_index, batch
-
-class TopkSAGE(torch.nn.Module):
-    def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
-        super().__init__()
-        self.dropout_rate = config["dropout"]
-
-        self.convblock1 = TopkSAGEBlock(in_feats, h_feats, dropout=self.dropout_rate)
-        self.convblock2 = TopkSAGEBlock(h_feats, h_feats, dropout=self.dropout_rate)
-        self.convblock3 = TopkSAGEBlock(h_feats, h_feats, dropout=self.dropout_rate)
-        self.convblock4 = TopkSAGEBlock(h_feats, h_feats, dropout=self.dropout_rate)
-
-        self.dense1 = torch.nn.Linear(8*h_feats, 4*h_feats)
-        self.dense2 = torch.nn.Linear(4*h_feats, num_classes)
-
-
-    def forward(self, x, edge_index, batch):
-        """equivalent to __call__"""
-        h1, flat_1, edge_index, batch = self.convblock1(x, edge_index, batch)
-        h2, flat_2, edge_index, batch = self.convblock2(h1, edge_index, batch)
-        h3, flat_3, edge_index, batch = self.convblock3(h2, edge_index, batch)
-        h4, flat_4, edge_index, batch = self.convblock4(h3, edge_index, batch)
-
-        #flatten = flat_1 + flat_2 + flat_3 + flat_4
-        flatten = torch.cat([flat_1, flat_2, flat_3, flat_4], axis=-1)
-        if torch.any(torch.isnan(flatten)):
-            print()
-
-        h = F.relu(self.dense1(F.dropout(flatten, p=self.dropout_rate, training=self.training)))
-        outputs = self.dense2(F.dropout(h, p=self.dropout_rate, training=self.training))
-
-        return outputs
-
 class SimpleSignalModel(torch.nn.Module):
+    """Model containing a cnn network to work directly on the signals"""
     def __init__(self, last_activation:str=None):
         super(SimpleSignalModel, self).__init__()
         self.layers = []
@@ -390,7 +283,5 @@ _dict_from_name = {
     "GCN": GCN,
     "TopkGCN": TopkGCN,
     "GatedGCN": GatedGCN,
-    "TopkGAT": TopkGAT,
-    "TopkSAGE": TopkSAGE,
     "Dense": DenseNet,
 }

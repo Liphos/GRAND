@@ -1,5 +1,4 @@
-import numpy as np
 import torch
 
-
-print(torch.cuda.is_available())
+def test_is_gpu_available():
+    print(torch.cuda.is_available())
