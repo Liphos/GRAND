@@ -2,23 +2,23 @@
 from typing import Dict, List, Tuple
 import glob
 
+import random
 import torch
-import os.path as osp
 from tqdm import tqdm
-import core.hdf5fileinout as hdf5io
 import numpy as np
 import torch_geometric as tg
+from scipy import signal
 
+import core.hdf5fileinout as hdf5io
 from core.utils import compute_neighbors, compute_neighbor_kdree
 from torch_geometric.data import InMemoryDataset
-from scipy import signal
-import random
-import timeit
+
 PATH_DATA = './GRAND_DATA/GP300Outbox/'
 PROGENITOR = 'Proton'
 ZENVAL = '_' + str(74.8)  # 63.0, 74.8, 81.3, 85.0, 87.1
 
-def find_dense_antennas(antenna_id_to_pos:Dict[str, List[float]]) -> Tuple[Dict[str, List[float]], Dict[str, List[float]]]:
+def find_dense_antennas(antenna_id_to_pos:Dict[str, List[float]]
+                        ) -> Tuple[Dict[str, List[float]], Dict[str, List[float]]]:
     """Returns 2 dictionaries containing the ids and positions of the antennas
        that are part in the dense part and those which are not
 
@@ -35,13 +35,13 @@ def find_dense_antennas(antenna_id_to_pos:Dict[str, List[float]]) -> Tuple[Dict[
     sort_ind = np.lexsort((all_values[:, 0],all_values[:, 1]), axis=0)
     antenna_nodense = {}
     antenna_dense = {}
-    previous_val = None
+    previous_val = []
     previous_diff = None
     for incr in range(len(all_keys[sort_ind])):
         value = all_values[sort_ind][incr]
         key = all_keys[sort_ind][incr]
         if np.any(np.abs(allowed_pos-value[0])<100):
-            if previous_val is None or previous_val[1] != value[1]:
+            if len(previous_val) == 0 or previous_val[1] != value[1]:
                 previous_val = value
                 previous_diff = None
                 antenna_nodense[key] = value
@@ -140,9 +140,6 @@ class GrandDataset(InMemoryDataset):
             train_graph_lst[str(densite)] = []
             test_graph_lst[str(densite)] = []
 
-        PATH_DATA = './GRAND_DATA/GP300Outbox/'
-        PROGENITOR = 'Proton'
-        ZENVAL = '_' + str(74.8)  # 63.0, 74.8, 81.3, 85.0, 87.1
         list_f = glob.glob(PATH_DATA+'*'+PROGENITOR+'*'+ZENVAL+'*')
         # list_f = glob.glob(PATH_DATA+'*')
         print('Number of files = %i' % (len(list_f)))
@@ -167,7 +164,9 @@ class GrandDataset(InMemoryDataset):
             #azimuth = hdf5io.GetEventAzimuth(run_info, 0)-180.
 
             antenna_id = antenna_info["ID"].value
-            antenna_pos = np.concatenate((antenna_info['X'].value[:, np.newaxis], antenna_info['Y'].value[:, np.newaxis], antenna_info['Z'].value[:, np.newaxis]), axis=-1)
+            antenna_pos = np.concatenate((antenna_info['X'].value[:, np.newaxis],
+                                          antenna_info['Y'].value[:, np.newaxis],
+                                          antenna_info['Z'].value[:, np.newaxis]), axis=-1)
 
             for ant in range(n_ant):
                 efield_loc = hdf5io.GetAntennaEfield(inputfilename, event_name,
@@ -545,4 +544,3 @@ class GrandDatasetSignal(InMemoryDataset):
 if __name__ == '__main__':
     dataset = GrandDataset("./GrandDatasetOHDeg", is_core_contained=False)
     train_dataset = dataset.train_datasets[5]
-    train_dataset
