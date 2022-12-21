@@ -1,0 +1,26 @@
+astropy
+h5py
+matplotlib
+numpy
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+torchaudio
+
+-f https://data.pyg.org/whl/torch-1.13.0+cpu.html
+pyg-lib
+torch-scatter
+torch-sparse
+torch-cluster
+torch-spline-conv
+torch-geometric
+
+scikit-learn
+scipy
+tqdm
+typing_extensions
+wandb
+
+#import local package Grand
+-e .

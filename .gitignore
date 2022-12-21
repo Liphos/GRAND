@@ -1,12 +1,11 @@
 #Ignore Data and the previous models
-GRAND_DATA/GP300Outbox
+data/GRAND_DATA/GP300Outbox
 GRAND_ML_model/
-GrandDataset**/
+data/GrandDataset**/
 */processed/
 Figures/
 wandb/
 core/Models/
-GrandDatasetSignal/
 slurm_script.sbatch
 .vscode/
 # Byte-compiled / optimized / DLL files

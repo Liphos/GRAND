@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import numpy as np
 import wandb
 
-from core.create_dataset import GrandDataset, GrandDatasetSignal, GrandDatasetAllSize
+from core.create_dataset import GrandDataset, GrandDatasetSignal
 from core.model import algorithm_from_name, SimpleSignalModel
 from core.utils import scaled_mse, scaled_l1
 
@@ -195,9 +195,6 @@ if __name__ == '__main__':
     if config["dataset"] == "Signal":
         print("Warning depricated")
         dataset = GrandDatasetSignal().shuffle()
-    elif config['dataset'] == "AllSize":
-        dataset = GrandDatasetAllSize()
-        train_dataset, test_dataset = dataset.train_dataset, dataset.test_dataset
     elif config['dataset'] == "Classic":
         dataset = GrandDataset(root=config["root"])
         train_dataset = dataset.train_datasets[int(config["ant_ratio_train"]*5)]
@@ -234,7 +231,7 @@ if __name__ == '__main__':
 
             model, cnn_embed, optimizer, lr_scheduler = create_model(config,
                                                                      train_dataset.num_features,
-                                                                     1,
+                                                                     num_classes=1,
                                                                      device=device)
 
             model.train()
@@ -244,7 +241,8 @@ if __name__ == '__main__':
                         data_list = data.to_data_list()
                         for graph in enumerate(data_list):
                             rand_nb = np.random.random_sample()*0.4 + 0.6
-                            indicies = torch.randperm(len(graph[1].x))[:int(np.round(len(graph[1].x)*rand_nb))]
+                            indicies = torch.randperm(len(graph[1].x))
+                            indicies = indicies[:int(np.round(len(graph[1].x)*rand_nb))]
                             data_list[graph[0]] = graph[1].subgraph(indicies)
                         data = tg.data.Batch.from_data_list(data_list)
 
@@ -290,7 +288,8 @@ if __name__ == '__main__':
                             data_list = data.to_data_list()
                             for graph in enumerate(data_list):
                                 rand_nb = np.random.random_sample()*0.4 + 0.6
-                                indicies = torch.randperm(len(graph[1].x))[:int(np.round(len(graph[1].x)*rand_nb))]
+                                indicies = torch.randperm(len(graph[1].x))
+                                indicies = indicies[:int(np.round(len(graph[1].x)*rand_nb))]
                                 data_list[graph[0]] = graph[1].subgraph(indicies)
                             data = tg.data.Batch.from_data_list(data_list)
                         data = data.to(device)
@@ -313,7 +312,8 @@ if __name__ == '__main__':
                             data_list = data.to_data_list()
                             for graph in enumerate(data_list):
                                 rand_nb = np.random.random_sample()*0.4 + 0.6
-                                indicies = torch.randperm(len(graph[1].x))[:int(np.round(len(graph[1].x)*rand_nb))]
+                                indicies = torch.randperm(len(graph[1].x))
+                                indicies = indicies[:int(np.round(len(graph[1].x)*rand_nb))]
                                 data_list[graph[0]] = graph[1].subgraph(indicies)
                             data = tg.data.Batch.from_data_list(data_list)
                             data = data.to(device)

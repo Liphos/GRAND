@@ -6,15 +6,14 @@ import torch
 import torch.nn.functional as F
 
 
-
-
-def compute_neighbor_kdree(lst_positions: Union[List[Tuple[float]], np.ndarray],
+def compute_neighbor_kdtree(lst_positions: Union[List[Tuple[float]], np.ndarray],
                            distance:float=1500)-> np.ndarray:
     """Create graph in O(Nlog(N))
 
     Args:
         lst_positions (Union[List[Tuple[float]], np.ndarray],): the positions of the antennas
-        distance (float, optional): the maximum distance two antennas are considered connected. Defaults to 2.
+        distance (float, optional): the maximum distance two antennas are considered connected.
+        Defaults to 2.
 
     Returns:
         np.ndarray: _description_
@@ -64,20 +63,20 @@ def compute_neighbors(lst_positions: Union[List[Tuple[float]], np.ndarray],
 def compute_peak2peak(efields_all_events):
     """Compute amplitude spike to spike"""
     #For the (max, min) and the 3 coordinates
-    peak_to_peak_arr = np.zeros((len(efields_all_events), 2, 3))
-    peak_to_peak_ind = np.zeros((len(efields_all_events), 2, 3))
-    peak_to_peak_all = []
+    p2p_arr = np.zeros((len(efields_all_events), 2, 3))
+    p2p_ind = np.zeros((len(efields_all_events), 2, 3))
+    p2p_all = []
 
     #Peak to Peak energy
     for efield in enumerate(efields_all_events):
-        peak_to_peak_energy = np.max(efield[1][:, :, 1:], axis=1) - np.min(efield[1][:, :, 1:], axis=1)
-        peak_to_peak_all.append(peak_to_peak_energy)
-        peak_to_peak_arr[efield[0]] = [np.max(peak_to_peak_energy, axis=0),
-                                       np.min(peak_to_peak_energy, axis=0)]
-        peak_to_peak_ind[efield[0]] = [np.argmax(peak_to_peak_energy, axis=0),
-                                       np.argmin(peak_to_peak_energy, axis=0)]
+        p2p_energy = np.max(efield[1][:, :, 1:], axis=1) - np.min(efield[1][:, :, 1:], axis=1)
+        p2p_all.append(p2p_energy)
+        p2p_arr[efield[0]] = [np.max(p2p_energy, axis=0),
+                                       np.min(p2p_energy, axis=0)]
+        p2p_ind[efield[0]] = [np.argmax(p2p_energy, axis=0),
+                                       np.argmin(p2p_energy, axis=0)]
 
-    return peak_to_peak_all, peak_to_peak_arr, peak_to_peak_ind
+    return p2p_all, p2p_arr, p2p_ind
 
 def compute_time_diff(efields_all_events):
     """Compute time between the two spikes"""
@@ -86,19 +85,18 @@ def compute_time_diff(efields_all_events):
     time_diff_peak_index = np.zeros((len(efields_all_events), 2))
     time_diff_all = []
 
-    smooth_time_diff_peak = np.zeros((len(efields_all_events), 2))
-    smooth_time_diff_peak_index = np.zeros((len(efields_all_events), 2))
-
-
     for efield in enumerate(efields_all_events):
-        time_diff = - (efield[1][:, :, 0][np.arange(len(efield[1])), np.argmax(efield[1][:, :, 2], axis=1)] -
-                       efield[1][:, :, 0][np.arange(len(efield[1])), np.argmin(efield[1][:, :, 2], axis=1)])
+        time_diff = - ((efield[1][:, :, 0][np.arange(len(efield[1])),
+                                          np.argmax(efield[1][:, :, 2], axis=1)]) -
+                       (efield[1][:, :, 0][np.arange(len(efield[1])),
+                                          np.argmin(efield[1][:, :, 2], axis=1)]))
 
         time_diff_peak[efield[0]] = [np.max(time_diff, axis=0), np.min(time_diff, axis=0)]
-        time_diff_peak_index[efield[0]] = [np.argmax(time_diff, axis=0), np.argmin(time_diff, axis=0)]
+        time_diff_peak_index[efield[0]] = [np.argmax(time_diff, axis=0),
+                                           np.argmin(time_diff, axis=0)]
         time_diff_all.append(time_diff)
 
-    return time_diff_all, time_diff_peak, time_diff_peak_index, smooth_time_diff_peak, smooth_time_diff_peak_index
+    return time_diff_all, time_diff_peak, time_diff_peak_index
 
 def compute_time_response(efields_all_events):
     """Find time of the first spike and when the signal is greater than 0.1 of the max value"""
