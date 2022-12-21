@@ -8,7 +8,6 @@ torch
 torchvision
 torchaudio
 
---find-links https://data.pyg.org/whl/torch-1.13.0+cpu.html
 pyg-lib
 torch-scatter
 torch-sparse

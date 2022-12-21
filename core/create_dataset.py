@@ -277,6 +277,13 @@ class GrandDataset(InMemoryDataset):
         lst_names_test = [f'test{densite}.pt' for densite in range(11)]
         return lst_names_train + lst_names_test
 
+    @property
+    def raw_file_names(self):
+        raise NotImplementedError
+
+    def download(self):
+        raise NotImplementedError
+
     def process(self):
         train_graph_lst = {}
         test_graph_lst = {}
@@ -288,8 +295,7 @@ class GrandDataset(InMemoryDataset):
         filter_params = {"N": 1, "Wn": 0.05}
         filter_params["bA"] = signal.butter(filter_params["N"], filter_params["Wn"], output='ba')
 
-        list_f = glob.glob(PATH_DATA+'*'+PROGENITOR+'*'+ZENVAL+'*')
-        all_features = load_all_files(list_f)
+        all_features = load_all_files(glob.glob(PATH_DATA+'*'+PROGENITOR+'*'+ZENVAL+'*'))
         # We normalize the observations
         # We normalize the position of the antennas that are shifted from their normal positions
         antenna_id_to_pos = compute_normalized_antennas(all_features["all_antenna_pos"],
