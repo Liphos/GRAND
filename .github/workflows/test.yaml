@@ -22,4 +22,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install tox tox-gh-actions
     - name: Test with tox
-      run: PIP_FIND_LINKS='https://data.pyg.org/whl/torch-1.13.0+cpu.html' tox
+      run: |
+        PIP_FIND_LINKS='https://data.pyg.org/whl/torch-1.13.0+cpu.html' \
+        tox
