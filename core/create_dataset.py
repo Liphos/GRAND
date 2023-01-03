@@ -11,13 +11,19 @@ from scipy import signal
 from torch_geometric.data import InMemoryDataset
 
 import core.hdf5fileinout as hdf5io
-from core.utils import compute_neighbors, compute_neighbor_kdtree
+from core.utils import (compute_neighbors,
+                        compute_neighbor_kdtree,
+                        compute_time_diff,
+                        compute_p2p,
+                        find_dense_antennas,
+                        compute_normalized_antennas
+                        )
 
 PATH_DATA = './data/GRAND_DATA/GP300Outbox/'
 PROGENITOR = 'Proton'
 ZENVAL = '_' + str(74.8)  # 63.0, 74.8, 81.3, 85.0, 87.1
 
-def load_file_info(filename:str) -> Tuple([float, str, np.ndarray, np.ndarray]):
+def load_file_info(filename:str) -> Tuple[float, str, np.ndarray, np.ndarray]:
     """Return needed information from the file"""
     run_info = hdf5io.GetRunInfo(filename)
     event_name = hdf5io.GetEventName(run_info, 0)
@@ -55,73 +61,6 @@ def load_all_files(lst_files:str) -> Dict[str, Union[float, str, np.ndarray]]:
 
     return all_features
 
-def find_dense_antennas(antenna_id_to_pos: Dict[str, List[float]]
-                        ) -> Tuple[Dict[str, List[float]], Dict[str, List[float]]]:
-    """Returns 2 dictionaries containing the ids and positions of the antennas
-       that are part in the dense part and those which are not
-
-    Args:
-        antenna_id_to_pos (Dict[str, List[float]]): The dictionary containing the ids
-        and positions of the antennas
-
-    Returns:
-        Tuple[Dict[str, List[float]], Dict[str, List[float]]]: the 2 dictionaries
-    """
-
-    allowed_pos = np.array([-11376 + 870*i for i in range(30)]) #This has been measured manually
-    all_values = np.array(list(antenna_id_to_pos.values()))
-    all_keys = np.array(list(antenna_id_to_pos.keys()))
-    sort_ind = np.lexsort((all_values[:, 0],all_values[:, 1]), axis=0)
-    antenna_nodense = {}
-    antenna_dense = {}
-    previous_val = []
-    previous_diff = None
-    for incr in enumerate(all_keys[sort_ind]):
-        value = all_values[sort_ind][incr[0]]
-        key = incr[1]
-        if np.any(np.abs(allowed_pos-value[0])<100):
-            if len(previous_val) == 0 or previous_val[1] != value[1]:
-                previous_val = value
-                previous_diff = None
-                antenna_nodense[key] = value
-            elif previous_diff is None:
-                previous_diff = value[0] - previous_val[0]
-                antenna_nodense[key] = value
-                previous_val = value
-            elif np.abs(previous_diff - (value[0] - previous_val[0])) < 10:
-                antenna_nodense[key] = value
-                previous_val = value
-            else:
-                antenna_dense[key] = value
-        else:
-            antenna_dense[key] = value
-    return antenna_nodense, antenna_dense
-
-def compute_normalized_antennas(all_antenna_pos, all_antenna_id) -> Dict[str, List[float]]:
-    """Compute the normalization of the given positions for all events"""
-    antenna_id_to_pos = {}
-    for event in enumerate(all_antenna_id):
-        normalization = None
-        for ant in enumerate(event[1]):
-            antenna = ant[1]
-            if antenna in antenna_id_to_pos:
-                normalization = np.array(all_antenna_pos[event[0]][ant[0]]) - np.array(antenna_id_to_pos[antenna])
-                break
-        if normalization is None:
-            antenna_id_to_pos[event[1][0]] = all_antenna_pos[event[0]][0]
-            normalization = np.zeros((3,))
-
-        for ant in enumerate(event[1]):
-            antenna = ant[1]
-            if antenna in antenna_id_to_pos:
-                if (antenna_id_to_pos[antenna] != all_antenna_pos[event[0]][ant[0]] -
-                    normalization).all():
-                    raise Exception("It can't be normalized")
-            else:
-                antenna_id_to_pos[antenna] = all_antenna_pos[event][ant[0]] - normalization
-
-    return antenna_id_to_pos
-
 def compute_edges(antenna_pos:np.ndarray, has_fix_degree:bool) -> Tuple[np.ndarray, np.ndarray]:
     """Compute the edges of the graph given the positions of the antennas
 
@@ -146,22 +85,6 @@ def compute_edges(antenna_pos:np.ndarray, has_fix_degree:bool) -> Tuple[np.ndarr
 
     return edge_index, edge_dist
 
-def compute_time_diff(efield_time:np.ndarray, efield_loc:np.ndarray) -> np.ndarray:
-    """Compute time difference betwwen the two peaks"""
-    time_diff = - (efield_time[np.arange(len(efield_loc)),
-                                        np.argmax(efield_loc, axis=1)] -
-                efield_time[np.arange(len(efield_loc)),
-                                        np.argmin(efield_loc, axis=1)])
-    return time_diff
-
-def compute_p2p(efields:np.ndarray) -> np.ndarray:
-    """Compute the peak to peak values for the given efields"""
-    p2p_max = np.max(efields, axis=1)
-    p2p_min = np.min(efields, axis=1)
-    p2p = p2p_max - p2p_min
-    p2p_first = np.argmax(efields, axis=1)
-    return p2p, p2p_first
-
 def create_obs(efield_loc_arr:np.ndarray,
                antenna_pos:np.ndarray,
                filter_params:Dict[str, Union[float, Tuple[float, float]]]) -> np.ndarray:
@@ -171,7 +94,7 @@ def create_obs(efield_loc_arr:np.ndarray,
     # ## We compute the features
     time_diff = compute_time_diff(efield_loc_arr[:, :, 0], efield_loc_arr[:, :, 2])
 
-    p2p_energy, p2p_energy_first = compute_p2p(efield_loc_arr[:, :, 1])
+    p2p_energy, p2p_energy_first = compute_p2p(efield_loc_arr[:, :, 1:])
 
     # we filter the signal in a smoother version and recompute features
     efield_smooth_arr = np.array([signal.filtfilt(filter_params["bA"][0],
@@ -181,13 +104,10 @@ def create_obs(efield_loc_arr:np.ndarray,
 
     time_diff_sm = compute_time_diff(efield_loc_arr[:, :, 0], efield_smooth_arr)
 
-    p2p_max_sm = np.max(efield_smooth_arr, axis=1)
-    p2p_min_sm = np.min(efield_smooth_arr, axis=1)
-    p2p_energy_sm = np.expand_dims(p2p_max_sm - p2p_min_sm, axis=-1)
-    p2p_energy_first_sm = np.expand_dims(np.argmax(efield_smooth_arr, axis=1), axis=-1)
+    p2p_energy_sm, p2p_energy_first_sm = compute_p2p(efield_smooth_arr)
 
     obs = np.concatenate(
-        (antenna_pos/10000,
+        (antenna_pos/1e4,
         (((p2p_energy) ** (1/5)) / 8),
         (((p2p_energy_sm) ** (1/5)) /8),
         efield_loc_arr[:, :, 0][np.expand_dims(np.arange(len(efield_loc_arr)), axis=-1),
@@ -253,8 +173,8 @@ class GrandDataset(InMemoryDataset):
         self.add_degree = add_degree
         self.max_degree = max_degree
         self.degree_tranform = tg.transforms.OneHotDegree(max_degree=max_degree)
-        super().__init__("./data" + root)
-        self.root = "./data" + root
+        super().__init__("./data/" + root)
+        self.root = "./data/" + root
 
         self.train_datasets = {}
         self.test_datasets = {}
@@ -277,12 +197,6 @@ class GrandDataset(InMemoryDataset):
         lst_names_test = [f'test{densite}.pt' for densite in range(11)]
         return lst_names_train + lst_names_test
 
-    @property
-    def raw_file_names(self):
-        raise NotImplementedError
-
-    def download(self):
-        raise NotImplementedError
 
     def process(self):
         train_graph_lst = {}
@@ -298,7 +212,7 @@ class GrandDataset(InMemoryDataset):
         all_features = load_all_files(glob.glob(PATH_DATA+'*'+PROGENITOR+'*'+ZENVAL+'*'))
         # We normalize the observations
         # We normalize the position of the antennas that are shifted from their normal positions
-        antenna_id_to_pos = compute_normalized_antennas(all_features["all_antenna_pos"],
+        antenna_id_to_pos = compute_normalized_antennas(all_features["antenna_pos"],
                                                         all_features["antenna_id"])
 
         antennas_to_keep = compute_antennas_to_keep(antenna_id_to_pos, self.is_core_contained)
@@ -308,11 +222,10 @@ class GrandDataset(InMemoryDataset):
             #We load the information from the files
             efield_loc_arr = all_features["efield_loc"][event]
             antenna_id = all_features["antenna_id"][event]
-            antenna_pos = all_features["antenna_pos"][event]
             energy = all_features["energy"][event]
 
             antenna_pos_corr = np.array([antenna_id_to_pos[id] for id in antenna_id])
-            obs = create_obs(efield_loc_arr, antenna_pos, filter_params)
+            obs = create_obs(efield_loc_arr, antenna_pos_corr, filter_params)
 
             is_test = (random.random() < 0.2)
             for densite in range(11):
@@ -349,8 +262,8 @@ class GrandDataset(InMemoryDataset):
 class GrandDatasetSignal(InMemoryDataset):
     """Old dataset to work directly with the signal"""
     def __init__(self, root= "GrandDatasetSignal"):
-        super().__init__("./data" + root)
-        self.root = "./data" + root
+        super().__init__("./data/" + root)
+        self.root = "./data/" + root
         self.data, self.slices = torch.load(self.processed_paths[0])
 
     @property

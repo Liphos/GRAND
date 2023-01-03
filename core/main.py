@@ -4,7 +4,6 @@ import os
 import argparse
 from typing import Dict, Union, List, Tuple, Callable
 
-import matplotlib.pyplot as plt
 import torch_geometric as tg
 import torch
 from torch.utils.data import DataLoader
@@ -16,6 +15,7 @@ import wandb
 from core.create_dataset import GrandDataset, GrandDatasetSignal
 from core.model import algorithm_from_name, SimpleSignalModel
 from core.utils import scaled_mse, scaled_l1
+from core.plot_utils import plot_training_results, plot_individual_preformance, plot_bins_results, plot_antennas
 
 
 def parser_to_config():
@@ -199,7 +199,8 @@ def load_models(model_dir:str, num_features:int, config_cfg:Dict, device='cpu'):
 
 def compute_preds_dataset(models:List[torch.nn.Module],
                          loader:DataLoader,
-                         loss_fn:Callable) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                         loss_fn:Callable,
+                         device:Union[str, torch.device]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute the predicton and the loss on the dataset"""
 
     loss_lst = []
@@ -211,7 +212,7 @@ def compute_preds_dataset(models:List[torch.nn.Module],
         pred = []
         with torch.no_grad():
             for data in loader:
-                data = data.to(model.device)
+                data = data.to(device)
                 pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
                 loss += loss_fn(pred[:, 0], data.y, reduction="sum").item()
                 n_tot += len(data.y)
@@ -231,6 +232,7 @@ def _compute_loss_dataset(model:torch.nn.Module,
                           loader:DataLoader,
                           loss_fn:Callable,
                           config_cfg:Dict,
+                          device:Union[str, torch.device],
                           cnn_embed=None):
     """Compute loss on a dataset"""
     loss = 0
@@ -241,10 +243,10 @@ def _compute_loss_dataset(model:torch.nn.Module,
             for graph in enumerate(data_list):
                 rand_nb = torch.rand(1).item()*0.4 + 0.6
                 indicies = torch.randperm(len(graph[1].x))
-                indicies = indicies[:torch.round(len(graph[1].x)*rand_nb).type(torch.LongTensor)]
+                indicies = indicies[:int(len(graph[1].x)*rand_nb)]
                 data_list[graph[0]] = graph[1].subgraph(indicies)
             data = tg.data.Batch.from_data_list(data_list)
-        data = data.to(model.device)
+        data = data.to(device)
         if config_cfg["dataset"] == "Signal":
             reshape_data = data.x[:, :-4].reshape(data.x.shape[0], 768, 3)
             inputs = cnn_embed(torch.swapaxes(reshape_data, 1, -1))
@@ -283,122 +285,6 @@ def compute_bins(pred: np.ndarray, energy: np.ndarray) -> Tuple[np.ndarray, np.n
     true_mean = np.array(true_mean)
 
     return pred_mean, pred_std, true_mean
-
-def plot_training_results(train_perf:List[float],
-                          test_perf:List[float],
-                          config_cfg:Dict,
-                          model_id:int,
-                          save_path:str) -> None:
-    """Plot the results of the training with matplotlib
-
-    Args:
-        train_perf (List[float]): training loss
-        test_perf (List[float]): testing loss
-        config_cfg (Dict): Dictionary containing all the parameters
-        model_id (int): the model id
-        save_path (str): the path to save the plots
-    """
-    if config_cfg["epochs"] >config_cfg["verbose_t"]:
-
-        print("Model: " + str(model_id) + " minimum train loss reached: ",
-            round(np.min(train_perf), 4),
-            "indicie: ", np.argmin(train_perf)
-            )
-
-        print("Model: " + str(model_id) + " minimum test  loss reached: ",
-            round(np.min(test_perf), 4),
-            "indicie: ", np.argmin(test_perf)
-            )
-        plt.clf()
-        nb_updates = int(np.floor((config_cfg["epochs"]-1)/config_cfg["verbose_t"]))
-        plt.plot([config_cfg["verbose_t"] * k for k in range(nb_updates)],
-                    train_perf,
-                    label="train loss"
-                    )
-        plt.plot([config_cfg["verbose_t"] * k for k in range(nb_updates)],
-                    test_perf,
-                    label="test loss"
-                    )
-        plt.xlabel("Number of epochs")
-        plt.ylabel("Loss (MSE)")
-        plt.legend()
-        plt.savefig(save_path + "_training")
-
-def plot_individual_preformance(pred: np.ndarray,
-                                energy: np.ndarray,
-                                mode:str="train",
-                                fig_dir:str=None) -> None:
-    """Plot the performance of each models
-
-    Args:
-        train_pred (np.ndarray): the predictions of the models
-        train_energy (np.ndarray): the true labels
-        mode (str, optional): train or test. Defaults to "train".
-        fig_dir (str, optional): the path to save the images. Defaults to None.
-    """
-    for i in enumerate(pred):
-        plt.clf()
-        plt.scatter(energy, i[1])
-        plt.plot(energy, energy, "k")
-        plt.title("Results on the {mode}ing set")
-        plt.xlabel("ground truth energy (eeV)")
-        plt.ylabel("predicted energy (eeV)")
-        plt.xlim(0, 4.1)
-        if fig_dir is not None:
-            plt.savefig(fig_dir + "/" + str(i[0]) + f"_{mode}")
-
-def plot_bins_results(train_values: Tuple[np.ndarray, np.ndarray, np.ndarray],
-                      test_values: Tuple[np.ndarray, np.ndarray, np.ndarray],
-                      fig_dir:str=None) -> None:
-    """Plot the results on the bins
-
-    Args:
-        train_values (Tuple[np.ndarray, np.ndarray, np.ndarray]): the train values
-        test_values (Tuple[np.ndarray, np.ndarray, np.ndarray]): the test values
-    """
-    pred_train_mean, pred_train_std, true_train_mean = train_values
-    pred_test_mean, pred_test_std, true_test_mean = test_values
-
-    #Plot the results on the bins
-    plt.clf()
-    plt.errorbar(true_train_mean, pred_train_mean, yerr=pred_train_std, fmt="o", label="Train")
-    plt.plot(true_train_mean, [0 for _ in range(len(true_train_mean))], "k")
-    plt.errorbar(true_test_mean, pred_test_mean, yerr=pred_test_std, fmt="o", label="Val")
-    plt.plot(true_test_mean, [0 for _ in range(len(true_test_mean))], "k")
-    plt.title("Results")
-    plt.xlabel("ground truth energy (EeV)")
-    plt.ylabel("$Residue E_{pr} - E_{th} (EeV)$")
-    plt.xlim(0, 4.1)
-    plt.legend()
-    if fig_dir is not None:
-        plt.savefig(fig_dir + "/" + "all")
-
-    #Plot the residue
-    plt.figure()
-    plt.errorbar(true_train_mean, pred_train_mean/true_train_mean,
-                    yerr=pred_train_std/true_train_mean, fmt="o", label="Train")
-    plt.plot(true_train_mean, [0 for _ in range(len(true_train_mean))], "k")
-    plt.errorbar(true_test_mean, pred_test_mean/true_test_mean,
-                    yerr=pred_test_std/true_test_mean, fmt="o", label="Val")
-    plt.plot(true_test_mean, [0 for _ in range(len(true_test_mean))], "k")
-    plt.title("Results")
-    plt.xlabel("ground truth energy (EeV)")
-    plt.ylabel(r"$Residue \Delta_{E}/E_{th} $")
-    plt.xlim(0, 4.1)
-    plt.legend()
-    if fig_dir is not None:
-        plt.savefig(fig_dir + "/" + "all" + "delta")
-
-    plt.show()
-    #Save all the results
-    if fig_dir is not None:
-        np.save(fig_dir + "/" + "train_pred", pred_train_mean)
-        np.save(fig_dir + "/" + "train_std", pred_train_std)
-        np.save(fig_dir + "/" + "train_true", true_train_mean)
-
-        np.save(fig_dir + "/" + "test_pred", pred_test_mean)
-        np.save(fig_dir + "/" + "test_std", pred_test_std)
-        np.save(fig_dir + "/" + "test_true", true_test_mean)
 
 def one_step_loss(model: torch.nn.Module,
                   data:tg.data.Batch,
@@ -450,7 +336,7 @@ def train_model(model_id:int,
 
     ###TODO:Change the num classes property of the class
     model, cnn_embed, optimizer, lr_scheduler = create_model(config_cfg,
-                                                            train_loader.num_features,
+                                                            train_dataset.num_features,
                                                             num_classes=1,
                                                             device=device)
     model.train()
@@ -463,6 +349,7 @@ def train_model(model_id:int,
                     indicies = torch.randperm(len(graph[1].x))
                     indicies = indicies[:int(np.round(len(graph[1].x)*rand_nb))]
                     data_list[graph[0]] = graph[1].subgraph(indicies)
+                    plot_antennas(data_list[graph[0]].x[:, :2], p2p=data_list[graph[0]].x[:, 4])
                 data = tg.data.Batch.from_data_list(data_list)
 
             data = data.to(device)
@@ -491,6 +378,7 @@ def train_model(model_id:int,
                                                train_loader,
                                                loss_fn,
                                                config,
+                                               device=device,
                                                cnn_embed=cnn_embed)
 
             lst_train_perf.append(train_loss)
@@ -499,6 +387,7 @@ def train_model(model_id:int,
                                               test_loader,
                                               loss_fn,
                                               config,
+                                              device=device,
                                               cnn_embed=cnn_embed)
 
             lst_test_perf.append(test_loss)
@@ -596,12 +485,14 @@ if __name__ == '__main__':
 
         models = load_models(model_dir_path, train_dataset.num_features, config, device=device)
 
-        _, train_pred, train_energy = compute_preds_dataset(models, train_loader, loss_fn=loss_fn)
+        _, train_pred, train_energy = compute_preds_dataset(models, train_loader,
+                                                            loss_fn=loss_fn, device=device)
         plot_individual_preformance(train_pred, train_energy, mode="train", fig_dir=fig_dir_path)
 
         # The same thing for test data #
 
-        _, test_pred, test_energy = compute_preds_dataset(models, test_loader, loss_fn=loss_fn)
+        _, test_pred, test_energy = compute_preds_dataset(models, test_loader,
+                                                          loss_fn=loss_fn, device=device)
         plot_individual_preformance(test_pred, test_energy, mode="test", fig_dir=fig_dir_path)
 
         # ## We computes the bins for all the models ## #

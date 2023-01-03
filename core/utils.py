@@ -1,9 +1,10 @@
-"""Functions to extract features from te dataset and to build the graph"""
-from typing import List, Tuple, Union
+"""Functions to extract features from the dataset and to build the graph"""
+from typing import List, Tuple, Union, Dict
 import numpy as np
 from scipy.spatial import KDTree
 import torch
 import torch.nn.functional as F
+import torch_geometric as tg
 
 
 def compute_neighbor_kdtree(lst_positions: Union[List[Tuple[float]], np.ndarray],
@@ -78,7 +79,7 @@ def compute_peak2peak(efields_all_events):
 
     return p2p_all, p2p_arr, p2p_ind
 
-def compute_time_diff(efields_all_events):
+def compute_time_diff_all_events(efields_all_events):
     """Compute time between the two spikes"""
     #For the (max, min) and we consider just Y since it is the most visible
     time_diff_peak = np.zeros((len(efields_all_events), 2))
@@ -117,6 +118,96 @@ def compute_time_response(efields_all_events):
 def scaled_l1(pred_labels, true_labels, reduction="mean"):
     """MAPE loss"""
     return F.l1_loss(pred_labels/true_labels, torch.ones_like(true_labels), reduction=reduction)
+
 def scaled_mse(pred_labels, true_labels, reduction="mean"):
     """square of the map"""
     return F.mse_loss(pred_labels/true_labels, torch.ones_like(true_labels), reduction=reduction)
+
+def find_dense_antennas(antenna_id_to_pos: Dict[str, List[float]]
+                        ) -> Tuple[Dict[str, List[float]], Dict[str, List[float]]]:
+    """Returns 2 dictionaries containing the ids and positions of the antennas
+       that are part in the dense part and those which are not
+
+    Args:
+        antenna_id_to_pos (Dict[str, List[float]]): The dictionary containing the ids
+        and positions of the antennas
+
+    Returns:
+        Tuple[Dict[str, List[float]], Dict[str, List[float]]]: the 2 dictionaries
+    """
+
+    allowed_pos = np.array([-11376 + 870*i for i in range(30)]) #This has been measured manually
+    all_values = np.array(list(antenna_id_to_pos.values()))
+    all_keys = np.array(list(antenna_id_to_pos.keys()))
+    sort_ind = np.lexsort((all_values[:, 0],all_values[:, 1]), axis=0)
+    antenna_nodense = {}
+    antenna_dense = {}
+    previous_val = []
+    previous_diff = None
+    for incr in enumerate(all_keys[sort_ind]):
+        value = all_values[sort_ind][incr[0]]
+        key = incr[1]
+        if np.any(np.abs(allowed_pos-value[0])<100):
+            if len(previous_val) == 0 or previous_val[1] != value[1]:
+                previous_val = value
+                previous_diff = None
+                antenna_nodense[key] = value
+            elif previous_diff is None:
+                previous_diff = value[0] - previous_val[0]
+                antenna_nodense[key] = value
+                previous_val = value
+            elif np.abs(previous_diff - (value[0] - previous_val[0])) < 10:
+                antenna_nodense[key] = value
+                previous_val = value
+            else:
+                antenna_dense[key] = value
+        else:
+            antenna_dense[key] = value
+    return antenna_nodense, antenna_dense
+
+def compute_normalized_antennas(all_antenna_pos, all_antenna_id) -> Dict[str, List[float]]:
+    """Compute the normalization of the given positions for all events"""
+    antenna_id_to_pos = {}
+    for event in enumerate(all_antenna_id):
+        normalization = None
+        for ant in enumerate(event[1]):
+            antenna = ant[1]
+            if antenna in antenna_id_to_pos:
+                normalization = np.array(all_antenna_pos[event[0]][ant[0]]) - np.array(antenna_id_to_pos[antenna])
+                break
+        if normalization is None:
+            antenna_id_to_pos[event[1][0]] = all_antenna_pos[event[0]][0]
+            normalization = np.zeros((3,))
+
+        for ant in enumerate(event[1]):
+            antenna = ant[1]
+            if antenna in antenna_id_to_pos:
+                if (antenna_id_to_pos[antenna] != all_antenna_pos[event[0]][ant[0]] -
+                    normalization).all():
+                    raise Exception("It can't be normalized")
+            else:
+                antenna_id_to_pos[antenna] = all_antenna_pos[event[0]][ant[0]] - normalization
+
+    return antenna_id_to_pos
+
+
+
+def compute_time_diff(efield_time:np.ndarray, efield_loc:np.ndarray) -> np.ndarray:
+    """Compute time difference betwwen the two peaks"""
+    time_diff = - (efield_time[np.arange(len(efield_loc)),
+                                        np.argmax(efield_loc, axis=1)] -
+                efield_time[np.arange(len(efield_loc)),
+                                        np.argmin(efield_loc, axis=1)])
+    return time_diff
+
+def compute_p2p(efields:np.ndarray) -> np.ndarray:
+    """Compute the peak to peak values for the given efields"""
+    p2p_max = np.max(efields, axis=1)
+    p2p_min = np.min(efields, axis=1)
+    if len(p2p_max.shape) == 1:
+        p2p = np.expand_dims(p2p_max - p2p_min, axis=-1)
+        p2p_first = np.expand_dims(np.argmax(efields, axis=1), axis=-1)
+    else:
+        p2p = p2p_max - p2p_min
+        p2p_first = np.argmax(efields, axis=1)
+    return p2p, p2p_first

@@ -271,7 +271,6 @@ class SimpleSignalModel(torch.nn.Module):
         f.close()
 
 
-
 def algorithm_from_name(name:str):
     """Returns algorithm given the name of the algorithm"""
     if name in _dict_from_name:
