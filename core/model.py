@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 from torch_geometric.nn import GCNConv, GatedGraphConv
 import torch_geometric.nn as tgn
+from torch_geometric.utils import unbatch
 
 class DenseNet(torch.nn.Module):
     """MLP model"""
@@ -181,6 +182,39 @@ class GatedGCN(torch.nn.Module):
 
         return outputs
 
+class GatedGCNTopK(torch.nn.Module):
+    """Implementation of the GatedGCN"""
+    def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
+        super().__init__()
+        self.dropout_rate = config["dropout"]
+        self.conv = GatedGraphConv(h_feats, config["num_layers"])
+        if int(config["topkratio"]) != config["topkratio"]:
+            raise ValueError("TopKratio must be an int here")
+        self.ratio = int(config["topkratio"])
+
+        self.pool = tgn.pool.TopKPooling(h_feats, ratio=self.ratio)
+
+        self.dense1 = torch.nn.Linear(self.ratio * h_feats, 8*h_feats)
+        self.dense2 = torch.nn.Linear(8*h_feats, num_classes)
+
+
+    def forward(self, inputs, edge_index, batch, edge_weight=None):
+        """equivalent to __call__"""
+        h_emb = self.conv(inputs, edge_index, edge_weight=edge_weight)
+        h_emb, edge_index, edge_weight, batch, _, _ = self.pool(h_emb,
+                                                        edge_index,
+                                                        batch=batch,
+                                                        edge_attr=edge_weight)
+        emb_batch = torch.stack(unbatch(h_emb, batch=batch))
+        flatten = torch.flatten(emb_batch, start_dim=1)
+        if torch.any(torch.isnan(flatten)):
+            print("Nan detected in the prediction")
+
+        h_emb = F.relu(self.dense1(F.dropout(flatten, p=self.dropout_rate)))
+        outputs = self.dense2(F.dropout(h_emb, p=self.dropout_rate))
+
+        return outputs
+
 class SimpleSignalModel(torch.nn.Module):
     """Model containing a cnn network to work directly on the signals"""
     def __init__(self, last_activation:str=None):
@@ -282,5 +316,6 @@ _dict_from_name = {
     "GCN": GCN,
     "TopkGCN": TopkGCN,
     "GatedGCN": GatedGCN,
+    "GatedGCNTopK": GatedGCNTopK,
     "Dense": DenseNet,
 }

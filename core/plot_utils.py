@@ -2,6 +2,7 @@
 from typing import List, Dict, Tuple
 
 import matplotlib.pyplot as plt
+import matplotlib
 import numpy as np
 import torch
 
@@ -123,11 +124,14 @@ def plot_bins_results(train_values: Tuple[np.ndarray, np.ndarray, np.ndarray],
 
 def plot_antennas(antenna_pos:torch.Tensor, p2p:torch.Tensor=None, save_dir:str=None):
     """Plot spatial distribution of the antennas"""
-    plt.scatter(antenna_pos[:, 0], antenna_pos[:, 1], c=torch.sqrt(p2p), cmap="Blues")
+    plt.clf()
+    plt.scatter(antenna_pos[:, 0], antenna_pos[:, 1], c=p2p, cmap="viridis",
+                norm=matplotlib.colors.Normalize(vmin=0, vmax=1))
     plt.axis([-1.2, 0.8, -1, 1])
     plt.title("Antennas positions")
     plt.xlabel("$X (10⁴ m)$")
     plt.ylabel("$Y (10⁴ m)$")
+    plt.colorbar()
     if save_dir is not None:
         plt.savefig(save_dir + "/antennas.png")
-    plt.show()
+    plt.show(block=False)

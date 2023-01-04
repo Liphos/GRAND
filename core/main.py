@@ -15,7 +15,10 @@ import wandb
 from core.create_dataset import GrandDataset, GrandDatasetSignal
 from core.model import algorithm_from_name, SimpleSignalModel
 from core.utils import scaled_mse, scaled_l1
-from core.plot_utils import plot_training_results, plot_individual_preformance, plot_bins_results, plot_antennas
+from core.plot_utils import (plot_training_results,
+                             plot_individual_preformance,
+                             plot_bins_results,
+                             plot_antennas)
 
 
 def parser_to_config():
@@ -209,18 +212,18 @@ def compute_preds_dataset(models:List[torch.nn.Module],
         loss = 0
         n_tot = 0
         energy = []
-        pred = []
+        predictions = []
         with torch.no_grad():
             for data in loader:
                 data = data.to(device)
                 pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
                 loss += loss_fn(pred[:, 0], data.y, reduction="sum").item()
                 n_tot += len(data.y)
-                pred = np.concatenate((pred, pred[:, 0].numpy()))
+                predictions = np.concatenate((predictions, pred[:, 0].numpy()))
                 energy = np.concatenate((energy, data.y.numpy()))
 
         loss_lst.append(loss/n_tot)
-        pred_lst.append(pred)
+        pred_lst.append(predictions)
 
     loss = np.array(loss_lst)
     pred = np.array(pred_lst)
@@ -349,7 +352,7 @@ def train_model(model_id:int,
                     indicies = torch.randperm(len(graph[1].x))
                     indicies = indicies[:int(np.round(len(graph[1].x)*rand_nb))]
                     data_list[graph[0]] = graph[1].subgraph(indicies)
-                    plot_antennas(data_list[graph[0]].x[:, :2], p2p=data_list[graph[0]].x[:, 4])
+                    #plot_antennas(data_list[graph[0]].x[:, :2], p2p=data_list[graph[0]].x[:, 4])
                 data = tg.data.Batch.from_data_list(data_list)
 
             data = data.to(device)
