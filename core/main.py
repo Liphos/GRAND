@@ -30,17 +30,25 @@ def parser_to_config():
     parser.add_argument("--algo",
                         type=str, default="GCN",
                         help="The model to use")
-    parser.add_argument("--ant_ratio_train",
-                        type=float, default=1,
-                        help="The ratio of dense or not dense antenna to use for training, "
-                             "0 means only sparse antenna and 2 means only dense antenna")
-    parser.add_argument("--ant_ratio_test",
-                        type=float, default=1,
-                        help="The ratio of dense or not dense antenna to use for testing, "
-                             "0 means only sparse antenna and 2 means only dense antenna")
+    parser.add_argument("--infill_ratio_test",
+                        type=float, default=0,
+                        help="The ratio of infill antenna to drop for testing, "
+                             "0 means keep all and 1 drop all")
+    parser.add_argument("--infill_ratio_train",
+                        type=float, default=0,
+                        help="The ratio of infill antenna to drop for training, "
+                             "0 means keep all and 1 drop all")
     parser.add_argument("--batch_size",
                         type=int, default=20,
                         help="batch size of the training")
+    parser.add_argument("--coarse_ratio_test",
+                        type=float, default=0,
+                        help="The ratio of coarse antenna to drop for testing, "
+                             "0 means keep all and 1 drop all")
+    parser.add_argument("--coarse_ratio_train",
+                        type=float, default=0,
+                        help="The ratio of coarse antenna to drop for training, "
+                             "0 means keep all and 1 drop all")
     parser.add_argument("--dataset",
                         type=str, default="Classic",
                         help='The dataset to train on')
@@ -75,9 +83,12 @@ def parser_to_config():
     parser.add_argument("--model_name",
                         type=str, default="No_name",
                         help="The name of the training model")
-    parser.add_argument("--num_layers",
+    parser.add_argument("--num_layers_gnn",
                         type=int, default=3,
-                        help="The number of layers to use")
+                        help="The number of gnn layers to use on top")
+    parser.add_argument("--num_layers_dense",
+                        type=int, default=2,
+                        help="The number of dense layers to use in the MLP")
     parser.add_argument("--readout",
                         type=str, default="sum",
                         help="The readout function to use")
@@ -91,7 +102,7 @@ def parser_to_config():
                         action='store_true', default=False,
                         help="enable training")
     parser.add_argument("--topkratio",
-                        type=float, default=0.8,
+                        type=float, default=1,
                         help="The ratio to use for the topk pooling")
     parser.add_argument("--not_drop_nodes",
                         action='store_true', default=False,
@@ -122,6 +133,14 @@ def create_loader(config_cfg:Dict[str, Union[str, int, float]]):
                     shuffle=not config_cfg["test"]
                 )
     return train_loader, test_loader
+
+def apply_transforms(config_cfg:Dict[str, Union[str, int, float]],
+                     dataset: tg.data.InMemoryDataset):
+    """Apply torch geometric transformations to add the edges and additional informations inside the dataset"""
+    edge_transform = tg.transforms.RadiusGraph(r=1500, loop=False, max_num_neighbors=32)
+    dataset = edge_transform(dataset)
+
+    return dataset
 
 def create_model(config_cfg:Dict[str, Union[str, int, float]],
                  input_features:int,
@@ -214,7 +233,8 @@ def compute_preds_dataset(models:List[torch.nn.Module],
         energy = []
         predictions = []
         with torch.no_grad():
-            for data in loader:
+            #Enumerate reset the loader enabling to test the same data with all models
+            for _, data in enumerate(loader):
                 data = data.to(device)
                 pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
                 loss += loss_fn(pred[:, 0], data.y, reduction="sum").item()
@@ -240,15 +260,7 @@ def _compute_loss_dataset(model:torch.nn.Module,
     """Compute loss on a dataset"""
     loss = 0
     n_tot = 0
-    for data in loader:
-        if not config_cfg["not_drop_nodes"]:
-            data_list = data.to_data_list()
-            for graph in enumerate(data_list):
-                rand_nb = torch.rand(1).item()*0.4 + 0.6
-                indicies = torch.randperm(len(graph[1].x))
-                indicies = indicies[:int(len(graph[1].x)*rand_nb)]
-                data_list[graph[0]] = graph[1].subgraph(indicies)
-            data = tg.data.Batch.from_data_list(data_list)
+    for _, data in enumerate(loader):
         data = data.to(device)
         if config_cfg["dataset"] == "Signal":
             reshape_data = data.x[:, :-4].reshape(data.x.shape[0], 768, 3)
@@ -323,7 +335,6 @@ def save_model(model:torch.nn.Module,
 
     torch.save(data_to_save, save_path + ".pt")
 
-
 def train_model(model_id:int,
                 loss_fn:Callable,
                 config_cfg:Dict,
@@ -340,20 +351,14 @@ def train_model(model_id:int,
     ###TODO:Change the num classes property of the class
     model, cnn_embed, optimizer, lr_scheduler = create_model(config_cfg,
                                                             train_dataset.num_features,
-                                                            num_classes=1,
+                                                            num_classes=dataset.num_classes,
                                                             device=device)
     model.train()
     for epoch in range(config_cfg["epochs"]):
         for data in train_loader:
             if not config_cfg["not_drop_nodes"]:
-                data_list = data.to_data_list()
-                for graph in enumerate(data_list):
-                    rand_nb = np.random.random_sample()*0.4 + 0.6
-                    indicies = torch.randperm(len(graph[1].x))
-                    indicies = indicies[:int(np.round(len(graph[1].x)*rand_nb))]
-                    data_list[graph[0]] = graph[1].subgraph(indicies)
-                    #plot_antennas(data_list[graph[0]].x[:, :2], p2p=data_list[graph[0]].x[:, 4])
-                data = tg.data.Batch.from_data_list(data_list)
+                _, _, node_mask = tg.utils.dropout_node(data.edge_index, p=0.2)
+                data = data.subgraph(node_mask)
 
             data = data.to(device)
             optimizer.zero_grad()
@@ -448,8 +453,12 @@ if __name__ == '__main__':
         dataset = GrandDatasetSignal().shuffle()
     elif config['dataset'] == "Classic":
         dataset = GrandDataset(root=config["root"])
-        train_dataset = dataset.train_datasets[int(config["ant_ratio_train"]*5)]
-        test_dataset = dataset.test_datasets[int(config["ant_ratio_test"]*5)]
+        train_dataset = dataset.train_datasets[(config["infill_ratio_train"], config["coarse_ratio_train"])]
+        test_dataset = dataset.test_datasets[(config["infill_ratio_test"], config["coarse_ratio_test"])]
+
+        #train_dataset = apply_transforms(config, train_dataset)
+        #test_dataset = apply_transforms(config, test_dataset)
+
     else:
         raise ValueError("This dataset don't exist")
 

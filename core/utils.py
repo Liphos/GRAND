@@ -6,7 +6,6 @@ import torch
 import torch.nn.functional as F
 import torch_geometric as tg
 
-
 def compute_neighbor_kdtree(lst_positions: Union[List[Tuple[float]], np.ndarray],
                            distance:float=1500)-> np.ndarray:
     """Create graph in O(Nlog(N))
@@ -189,8 +188,6 @@ def compute_normalized_antennas(all_antenna_pos, all_antenna_id) -> Dict[str, Li
                 antenna_id_to_pos[antenna] = all_antenna_pos[event[0]][ant[0]] - normalization
 
     return antenna_id_to_pos
-
-
 
 def compute_time_diff(efield_time:np.ndarray, efield_loc:np.ndarray) -> np.ndarray:
     """Compute time difference betwwen the two peaks"""

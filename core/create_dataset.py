@@ -134,30 +134,30 @@ def find_core_antennas(antenna_id_to_pos: Dict[str, List[float]]) -> set:
     return core_ants
 
 def compute_antennas_to_keep(antenna_id_to_pos: Dict[str, List[float]],
-                       is_core_contained:bool=False) -> List[set]:
+                             lst_pourcent:List[int],
+                             is_core_contained:bool=False) -> Dict[Tuple[int, int],set]:
     """Compute the antennas that are kept between the infill, coarse, and core antennas"""
     if is_core_contained:
         core_ants = find_core_antennas(antenna_id_to_pos)
     else:
         core_ants = set(antenna_id_to_pos.keys())
     antenna_no_dense, antenna_dense = find_dense_antennas(antenna_id_to_pos)
-    antennas_to_keep = []
-    for densite in range(11):
-        if densite < 5:
-            ants_to_keep = set(antenna_no_dense.keys())
-            key_lst = list(antenna_dense.keys())
-            random.shuffle(key_lst)
-            ants_to_keep.update(key_lst[:int(len(key_lst)*densite/5)])
-        elif densite == 1:
-            ants_to_keep = set(antenna_id_to_pos.keys())
-        else:
-            ants_to_keep = set(antenna_dense.keys())
-            key_lst = list(antenna_no_dense.keys())
-            random.shuffle(key_lst)
-            ants_to_keep.update(key_lst[:int(len(key_lst)*(2 - densite/5))])
+    antennas_to_keep = {}
+    for distrib_infill in lst_pourcent:
+        for distrib_coarse in lst_pourcent:
+            key = (distrib_infill, distrib_coarse)
+            key_infill_lst = list(antenna_dense.keys())
+            random.shuffle(key_infill_lst)
+            key_coarse_lst = list(antenna_no_dense.keys())
+            random.shuffle(key_coarse_lst)
 
-        ants_to_keep = ants_to_keep.intersection(core_ants)
-        antennas_to_keep.append(ants_to_keep)
+            ants_to_keep = set()
+            ants_to_keep.update(key_infill_lst[:int(len(key_infill_lst) * (1-distrib_infill*0.01))])
+            ants_to_keep.update(key_coarse_lst[:int(len(key_coarse_lst) * (1-distrib_coarse*0.01))])
+
+            ants_to_keep = ants_to_keep.intersection(core_ants)
+            antennas_to_keep[key] = ants_to_keep
+
     return antennas_to_keep
 
 class GrandDataset(InMemoryDataset):
@@ -166,44 +166,67 @@ class GrandDataset(InMemoryDataset):
                  is_core_contained:bool=False,
                  has_fix_degree:bool=False,
                  add_degree:bool=True,
-                 max_degree:int=19):
+                 max_degree:int=20,
+                 distance:int=1500):
 
         self.is_core_contained = is_core_contained
         self.has_fix_degree = has_fix_degree
         self.add_degree = add_degree
         self.max_degree = max_degree
-        self.degree_tranform = tg.transforms.OneHotDegree(max_degree=max_degree)
+        self.all_transforms = [
+            tg.transforms.RadiusGraph(r=distance, loop=False, max_num_neighbors=self.max_degree-1),
+        ]
+        if self.add_degree:
+            self.all_transforms.append(tg.transforms.OneHotDegree(max_degree=max_degree))
+        self.lst_pourcent = [0, 2, 5, 10, 15, 20, 30, 40]
+
         super().__init__("./data/" + root)
         self.root = "./data/" + root
 
         self.train_datasets = {}
         self.test_datasets = {}
-        for densite in range(11):
-            _train_data, _train_slices = torch.load(self.processed_paths[densite])
-            _test_data, _test_slices = torch.load(self.processed_paths[11 + densite])
+        for enum_infill in enumerate(self.lst_pourcent):
+            incr_infill, distrib_infill = enum_infill
+            for enum_coarse in enumerate(self.lst_pourcent):
+                incr_coarse, distrib_coarse = enum_coarse
+                key_train = incr_infill * len(self.lst_pourcent) + incr_coarse
+                key_test = key_train + len(self.lst_pourcent) ** 2
+                key = (distrib_infill, distrib_coarse)
+                _train_data, _train_slices = torch.load(self.processed_paths[key_train])
+                _test_data, _test_slices = torch.load(self.processed_paths[key_test])
 
-            train_dataset = InMemoryDataset()
-            train_dataset.data, train_dataset.slices = _train_data, _train_slices
-            self.train_datasets[densite] = train_dataset
+                train_dataset = InMemoryDataset()
+                train_dataset.data, train_dataset.slices = _train_data, _train_slices
+                self.train_datasets[key] = train_dataset
 
-            test_dataset = InMemoryDataset()
-            test_dataset.data, test_dataset.slices = _test_data, _test_slices
-            self.test_datasets[densite] = test_dataset
+                test_dataset = InMemoryDataset()
+                test_dataset.data, test_dataset.slices = _test_data, _test_slices
+                self.test_datasets[key] = test_dataset
 
 
     @property
     def processed_file_names(self):
-        lst_names_train = [f'train{densite}.pt' for densite in range(11)]
-        lst_names_test = [f'test{densite}.pt' for densite in range(11)]
+        lst_names_train = []
+        lst_names_test = []
+        for distrib_infill in self.lst_pourcent:
+            for distrib_coarse in self.lst_pourcent:
+                suffix = f'_infill_{distrib_infill}_coarse_{distrib_coarse}.pt'
+                lst_names_train.append(f'train_{suffix}')
+                lst_names_test.append(f'test_{suffix}')
         return lst_names_train + lst_names_test
 
+    @property
+    def num_classes(self) -> int:
+        return 1
 
     def process(self):
         train_graph_lst = {}
         test_graph_lst = {}
-        for densite in range(11):
-            train_graph_lst[str(densite)] = []
-            test_graph_lst[str(densite)] = []
+        for distrib_infill in self.lst_pourcent:
+            for distrib_coarse in self.lst_pourcent:
+                key = (distrib_infill, distrib_coarse)
+                train_graph_lst[key] = []
+                test_graph_lst[key] = []
 
         #Parameters for the filter
         filter_params = {"N": 1, "Wn": 0.05}
@@ -215,9 +238,10 @@ class GrandDataset(InMemoryDataset):
         antenna_id_to_pos = compute_normalized_antennas(all_features["antenna_pos"],
                                                         all_features["antenna_id"])
 
-        antennas_to_keep = compute_antennas_to_keep(antenna_id_to_pos, self.is_core_contained)
+        antennas_to_keep = compute_antennas_to_keep(antenna_id_to_pos, self.lst_pourcent,self.is_core_contained)
 
         print("Compute features and find connections for the graphs")
+
         for event in tqdm(range(len(all_features["energy"]))):
             #We load the information from the files
             efield_loc_arr = all_features["efield_loc"][event]
@@ -228,33 +252,40 @@ class GrandDataset(InMemoryDataset):
             obs = create_obs(efield_loc_arr, antenna_pos_corr, filter_params)
 
             is_test = (random.random() < 0.2)
-            for densite in range(11):
-                ants_to_keep = np.array([id in antennas_to_keep[densite]
-                                         for id in antenna_id])
-                edge_index, _ = compute_edges(antenna_pos_corr[ants_to_keep], self.has_fix_degree)
-                graph = tg.data.Data(
-                    x=torch.tensor(obs[ants_to_keep], dtype=torch.float32),
-                    edge_index=edge_index,
-                    y=torch.tensor(energy, dtype=torch.float32)
-                    )
+            for distrib_infill in self.lst_pourcent:
+                for distrib_coarse in self.lst_pourcent:
+                    key = (distrib_infill, distrib_coarse)
+                    ants_to_keep = np.array([id in antennas_to_keep[key]
+                                            for id in antenna_id])
+                    graph = tg.data.Data(
+                        x=torch.tensor(obs[ants_to_keep], dtype=torch.float32),
+                        y=torch.tensor(energy, dtype=torch.float32),
+                        ###TODO: fix the fact that num_classes is not computed correctly ###
+                        pos=torch.tensor(antenna_pos_corr[ants_to_keep], dtype=torch.float32)
+                        )
+                    graph = tg.transforms.Compose(self.all_transforms)(graph)
+                    ### We might overwrite the edges during training while loading the dataset ###
 
-                if self.add_degree:
-                    graph = self.degree_tranform(graph)
+                    if is_test:
+                        test_graph_lst[key].append(graph)
+                    else:
+                        train_graph_lst[key].append(graph)
 
-                if is_test:
-                    test_graph_lst[str(densite)].append(graph)
-                else:
-                    train_graph_lst[str(densite)].append(graph)
+        print("Saving")
+        for enum_infill in enumerate(self.lst_pourcent):
+            incr_infill, distrib_infill = enum_infill
+            for enum_coarse in enumerate(self.lst_pourcent):
+                incr_coarse, distrib_coarse = enum_coarse
+                key = (distrib_infill, distrib_coarse)
+                key_train = incr_infill * len(self.lst_pourcent) + incr_coarse
+                key_test = key_train + len(self.lst_pourcent) ** 2
+                train_data, train_slices = self.collate(train_graph_lst[key])
+                torch.save((train_data, train_slices), self.processed_paths[key_train])
+                print("Train dataset saved to: ", self.processed_paths[key_train])
 
-
-        for densite in range(11):
-            train_data, train_slices = self.collate(train_graph_lst[str(densite)])
-            torch.save((train_data, train_slices), self.processed_paths[densite])
-            print("Train dataset saved to: ", self.processed_paths[densite])
-
-            test_data, test_slices = self.collate(test_graph_lst[str(densite)])
-            torch.save((test_data, test_slices), self.processed_paths[11 + densite])
-            print("Test dataset saved to: ", self.processed_paths[11 + densite])
+                test_data, test_slices = self.collate(test_graph_lst[key])
+                torch.save((test_data, test_slices), self.processed_paths[key_test])
+                print("Test dataset saved to: ", self.processed_paths[key_test])
 
 
 # Dataset Containing the raw signals
@@ -365,5 +396,5 @@ class GrandDatasetSignal(InMemoryDataset):
 
 
 if __name__ == '__main__':
-    dataset = GrandDataset("GrandDatasetOHDeg", is_core_contained=False)
-    dataset_tr = dataset.train_datasets[5]
+    dataset = GrandDataset("GrandDatasetAll", is_core_contained=False, max_degree=20, distance=1500)
+    print(dataset.num_classes)

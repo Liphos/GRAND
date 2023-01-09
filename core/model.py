@@ -12,17 +12,32 @@ class DenseNet(torch.nn.Module):
     def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
         super().__init__()
         self.dropout_rate = config["dropout"]
-        self.num_layers = config["num_layers"]-2
-        self.dense_in = torch.nn.Linear(in_feats, h_feats)
+        self.num_layers = config["num_layers_dense"]-2
+        if int(config["topkratio"]) != config["topkratio"]:
+            raise ValueError("TopKratio must be an int here")
+        self.ratio = int(config["topkratio"])
+
+        if self.ratio != 1:
+            self.pool = tgn.pool.TopKPooling(in_feats, ratio=self.ratio)
+
+        self.dense_in = torch.nn.Linear(self.ratio * in_feats, h_feats)
         self.dense = torch.nn.ModuleList([torch.nn.Linear(h_feats, h_feats) for _ in range(self.num_layers)])
         self.dense_out = torch.nn.Linear(h_feats, num_classes)
 
 
     def forward(self, inputs, edge_index, batch, edge_weight=None):
         """equivalent to __call__"""
-        flatten = tgn.pool.global_max_pool(inputs, batch=batch)
-        #flatten = torch.cat([tgn.pool.global_mean_pool(inputs, batch=batch),
-        #                     tgn.pool.global_max_pool(inputs, batch=batch)], axis=-1)
+        if self.ratio != 1:
+            h_emb, _, _, batch, _, _ = self.pool(inputs,
+                                                 edge_index,
+                                                 batch=batch,
+                                                 edge_attr=edge_weight)
+            emb_batch = torch.stack(unbatch(h_emb, batch=batch))
+            flatten = torch.flatten(emb_batch, start_dim=1)
+        else:
+            flatten = tgn.pool.global_max_pool(inputs, batch=batch)
+            #flatten = torch.cat([tgn.pool.global_mean_pool(inputs, batch=batch),
+            #                     tgn.pool.global_max_pool(inputs, batch=batch)], axis=-1)
 
         if torch.any(torch.isnan(flatten)):
             print("Nan detected in the prediction")
@@ -61,12 +76,20 @@ class GCN(torch.nn.Module):
     def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
         super().__init__()
         self.dropout_rate = config["dropout"]
-        self.num_layers = config["num_layers"] - 1
+        self.num_layers_gnn = config["num_layers_gnn"] - 1
+        self.num_layers_dense = config["num_layers_dense"] - 2
         self.convinput = GCNBlock(in_feats, h_feats)
-        self.convblocks = torch.nn.ModuleList([GCNBlock(h_feats, h_feats, add_residue=True) for _ in range(self.num_layers)])
+        self.convblocks = torch.nn.ModuleList([GCNBlock(h_feats, h_feats, add_residue=True) for _ in range(self.num_layers_gnn)])
+        if int(config["topkratio"]) != config["topkratio"]:
+            raise ValueError("TopKratio must be an int here")
+        self.ratio = int(config["topkratio"])
 
-        self.dense1 = torch.nn.Linear(h_feats, 4*h_feats)
-        self.dense2 = torch.nn.Linear(4*h_feats, num_classes)
+        if self.ratio != 1:
+            self.pool = tgn.pool.TopKPooling(h_feats, ratio=self.ratio)
+
+        self.dense_in = torch.nn.Linear(self.ratio * h_feats, h_feats)
+        self.dense = torch.nn.ModuleList([torch.nn.Linear(h_feats, h_feats) for _ in range(self.num_layers_dense)])
+        self.dense_out = torch.nn.Linear(h_feats, num_classes)
 
 
     def forward(self, inputs, edge_index, batch, edge_weight=None):
@@ -76,7 +99,55 @@ class GCN(torch.nn.Module):
                                                                        batch,
                                                                        edge_weight=edge_weight)
         flatten = flat_1
-        for i in range(self.num_layers):
+        for i in range(self.num_layers_gnn):
+            h_emb, _, edge_index, edge_weight, batch = self.convblocks[i](h_emb,
+                                                                             edge_index,
+                                                                             batch,
+                                                                             edge_weight=edge_weight)
+        if self.ratio != 1:
+            h_emb, _, _, batch, _, _ = self.pool(h_emb,
+                                                 edge_index,
+                                                 batch=batch,
+                                                 edge_attr=edge_weight)
+            emb_batch = torch.stack(unbatch(h_emb, batch=batch))
+            flatten = torch.flatten(emb_batch, start_dim=1)
+        else:
+            flatten = tgn.pool.global_max_pool(h_emb, batch=batch)
+
+
+        if torch.any(torch.isnan(flatten)):
+            print("Nan detected in the prediction")
+
+        h_emb = F.relu(self.dense_in(flatten))
+        for layer in self.dense:
+            h_emb = F.relu(layer(F.dropout(h_emb, p=self.dropout_rate)))
+        outputs = self.dense_out(F.dropout(h_emb, p=self.dropout_rate))
+
+        return outputs
+
+class HierarchicalGCN(torch.nn.Module):
+    """Hierarchical GCN model"""
+    def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
+        super().__init__()
+        self.dropout_rate = config["dropout"]
+        self.num_layers_gnn = config["num_layers_gnn"] - 1
+        self.num_layers_dense = config["num_layers_dense"] - 2
+        self.convinput = GCNBlock(in_feats, h_feats)
+        self.convblocks = torch.nn.ModuleList([GCNBlock(h_feats, h_feats, add_residue=True) for _ in range(self.num_layers_gnn)])
+
+        self.dense_in = torch.nn.Linear(h_feats, h_feats)
+        self.dense = torch.nn.ModuleList([torch.nn.Linear(h_feats, h_feats) for _ in range(self.num_layers_dense)])
+        self.dense_out = torch.nn.Linear(h_feats, num_classes)
+
+
+    def forward(self, inputs, edge_index, batch, edge_weight=None):
+        """equivalent to __call__"""
+        h_emb, flat_1, edge_index, edge_weight, batch = self.convinput(inputs,
+                                                                       edge_index,
+                                                                       batch,
+                                                                       edge_weight=edge_weight)
+        flatten = flat_1
+        for i in range(self.num_layers_gnn):
             h_emb, flat, edge_index, edge_weight, batch = self.convblocks[i](h_emb,
                                                                              edge_index,
                                                                              batch,
@@ -86,8 +157,10 @@ class GCN(torch.nn.Module):
         if torch.any(torch.isnan(flatten)):
             print("Nan detected in the prediction")
 
-        h_emb = F.relu(self.dense1(F.dropout(flatten, p=self.dropout_rate)))
-        outputs = self.dense2(F.dropout(h_emb, p=self.dropout_rate))
+        h_emb = F.relu(self.dense_in(flatten))
+        for layer in self.dense:
+            h_emb = F.relu(layer(F.dropout(h_emb, p=self.dropout_rate)))
+        outputs = self.dense_out(F.dropout(h_emb, p=self.dropout_rate))
 
         return outputs
 
@@ -125,9 +198,10 @@ class TopkGCN(torch.nn.Module):
         super().__init__()
         self.dropout_rate = config["dropout"]
         self.ratio = config["topkratio"]
-        self.num_layers = config["num_layers"] - 1
+        self.num_layers_gnn = config["num_layers_gnn"] - 1
+        self.num_layers_dense = config["num_layers_dense"] - 2
         self.convinput = TopkGCNBlock(in_feats, h_feats, ratio=self.ratio)
-        self.convblocks = torch.nn.ModuleList([TopkGCNBlock(h_feats, h_feats, ratio=self.ratio) for _ in range(self.num_layers)])
+        self.convblocks = torch.nn.ModuleList([TopkGCNBlock(h_feats, h_feats, ratio=self.ratio) for _ in range(self.num_layers_gnn)])
 
         self.dense1 = torch.nn.Linear(2*h_feats, 4*h_feats)
         self.dense2 = torch.nn.Linear(4*h_feats, num_classes)
@@ -140,7 +214,7 @@ class TopkGCN(torch.nn.Module):
                                                                        batch,
                                                                        edge_weight=edge_weight)
         flatten = flat_1
-        for i in range(self.num_layers):
+        for i in range(self.num_layers_gnn):
             h_emb, flat, edge_index, edge_weight, batch = self.convblocks[i](h_emb,
                                                                              edge_index,
                                                                              batch,
@@ -156,64 +230,50 @@ class TopkGCN(torch.nn.Module):
 
         return outputs
 
-
 class GatedGCN(torch.nn.Module):
     """Implementation of the GatedGCN"""
     def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
         super().__init__()
         self.dropout_rate = config["dropout"]
-        self.conv = GatedGraphConv(h_feats, config["num_layers"])
+        self.num_layers_dense = config["num_layers_dense"] - 2
+        self.conv = GatedGraphConv(h_feats, config["num_layers_gnn"])
 
-        self.dense1 = torch.nn.Linear(h_feats, 4*h_feats)
-        self.dense2 = torch.nn.Linear(4*h_feats, num_classes)
-
-
-    def forward(self, inputs, edge_index, batch, edge_weight=None):
-        """equivalent to __call__"""
-        h_emb = self.conv(inputs, edge_index, edge_weight=edge_weight)
-
-        flatten = torch.cat([tgn.pool.global_max_pool(h_emb, batch=batch)], axis=-1)
-        #flatten = torch.cat([flat_1, flat_2, flat_3, flat_4], axis=-1)
-        if torch.any(torch.isnan(flatten)):
-            print("Nan detected in the prediction")
-
-        h_emb = F.relu(self.dense1(F.dropout(flatten, p=self.dropout_rate)))
-        outputs = self.dense2(F.dropout(h_emb, p=self.dropout_rate))
-
-        return outputs
-
-class GatedGCNTopK(torch.nn.Module):
-    """Implementation of the GatedGCN"""
-    def __init__(self, in_feats: int, h_feats: int, num_classes:int, config=None):
-        super().__init__()
-        self.dropout_rate = config["dropout"]
-        self.conv = GatedGraphConv(h_feats, config["num_layers"])
         if int(config["topkratio"]) != config["topkratio"]:
             raise ValueError("TopKratio must be an int here")
         self.ratio = int(config["topkratio"])
 
-        self.pool = tgn.pool.TopKPooling(h_feats, ratio=self.ratio)
+        if self.ratio != 1:
+            self.pool = tgn.pool.TopKPooling(h_feats, ratio=self.ratio)
 
-        self.dense1 = torch.nn.Linear(self.ratio * h_feats, 8*h_feats)
-        self.dense2 = torch.nn.Linear(8*h_feats, num_classes)
+        self.dense_in = torch.nn.Linear(self.ratio * h_feats, h_feats)
+        self.dense = torch.nn.ModuleList([torch.nn.Linear(h_feats, h_feats) for _ in range(self.num_layers_dense)])
+        self.dense_out = torch.nn.Linear(h_feats, num_classes)
 
 
     def forward(self, inputs, edge_index, batch, edge_weight=None):
         """equivalent to __call__"""
         h_emb = self.conv(inputs, edge_index, edge_weight=edge_weight)
-        h_emb, edge_index, edge_weight, batch, _, _ = self.pool(h_emb,
-                                                        edge_index,
-                                                        batch=batch,
-                                                        edge_attr=edge_weight)
-        emb_batch = torch.stack(unbatch(h_emb, batch=batch))
-        flatten = torch.flatten(emb_batch, start_dim=1)
+
+        if self.ratio != 1:
+            h_emb, _, _, batch, _, _ = self.pool(h_emb,
+                                                 edge_index,
+                                                 batch=batch,
+                                                 edge_attr=edge_weight)
+            emb_batch = torch.stack(unbatch(h_emb, batch=batch))
+            flatten = torch.flatten(emb_batch, start_dim=1)
+        else:
+            flatten = tgn.pool.global_max_pool(h_emb, batch=batch)
+        #flatten = torch.cat([flat_1, flat_2, flat_3, flat_4], axis=-1)
         if torch.any(torch.isnan(flatten)):
             print("Nan detected in the prediction")
 
-        h_emb = F.relu(self.dense1(F.dropout(flatten, p=self.dropout_rate)))
-        outputs = self.dense2(F.dropout(h_emb, p=self.dropout_rate))
+        h_emb = F.relu(self.dense_in(flatten))
+        for layer in self.dense:
+            h_emb = F.relu(layer(F.dropout(h_emb, p=self.dropout_rate)))
+        outputs = self.dense_out(F.dropout(h_emb, p=self.dropout_rate))
 
         return outputs
+
 
 class SimpleSignalModel(torch.nn.Module):
     """Model containing a cnn network to work directly on the signals"""
@@ -304,7 +364,6 @@ class SimpleSignalModel(torch.nn.Module):
                 f.write(str(layer._get_name) + "\n")
         f.close()
 
-
 def algorithm_from_name(name:str):
     """Returns algorithm given the name of the algorithm"""
     if name in _dict_from_name:
@@ -316,6 +375,5 @@ _dict_from_name = {
     "GCN": GCN,
     "TopkGCN": TopkGCN,
     "GatedGCN": GatedGCN,
-    "GatedGCNTopK": GatedGCNTopK,
     "Dense": DenseNet,
 }
