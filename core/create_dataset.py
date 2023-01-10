@@ -178,7 +178,7 @@ class GrandDataset(InMemoryDataset):
         ]
         if self.add_degree:
             self.all_transforms.append(tg.transforms.OneHotDegree(max_degree=max_degree))
-        self.lst_pourcent = [0, 2, 5, 10, 15, 20, 30, 40]
+        self.lst_pourcent = [0, 2, 5, 10, 15, 20, 22, 25, 30, 35, 40]
 
         super().__init__("./data/" + root)
         self.root = "./data/" + root
@@ -396,5 +396,5 @@ class GrandDatasetSignal(InMemoryDataset):
 
 
 if __name__ == '__main__':
-    dataset = GrandDataset("GrandDatasetAll", is_core_contained=False, max_degree=20, distance=1500)
-    print(dataset.num_classes)
+    dataset = GrandDataset("GrandDatasetCor", is_core_contained=False, max_degree=20, distance=1500)
+    print(dataset.train_datasets[(25, 25)])

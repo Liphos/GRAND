@@ -6,6 +6,7 @@ from typing import Dict, Union, List, Tuple, Callable
 
 import torch_geometric as tg
 import torch
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
@@ -117,7 +118,7 @@ def parser_to_config():
 
     return vars(parser.parse_args())
 
-def create_loader(config_cfg:Dict[str, Union[str, int, float]]):
+def create_loader(config_cfg:Dict[str, Union[str, int, float]], train_dataset, test_dataset):
 
     """Create data loaders"""
 
@@ -134,6 +135,21 @@ def create_loader(config_cfg:Dict[str, Union[str, int, float]]):
                 )
     return train_loader, test_loader
 
+def load_dataset(config_cfg:Dict[str, Union[str, int ,float]]):
+    """Loads dataset using config"""
+    if config_cfg["dataset"] == "Signal":
+        print("Warning depricated")
+        dataset = GrandDatasetSignal().shuffle()
+        train_dataset = dataset.train_dataset
+        test_dataset = dataset.test_dataset
+    elif config_cfg['dataset'] == "Classic":
+        dataset = GrandDataset(root=config_cfg["root"])
+        train_dataset = dataset.train_datasets[(config_cfg["infill_ratio_train"], config_cfg["coarse_ratio_train"])]
+        test_dataset = dataset.test_datasets[(config_cfg["infill_ratio_test"], config_cfg["coarse_ratio_test"])]
+    else:
+        raise ValueError("This dataset don't exist")
+
+    return dataset, train_dataset, test_dataset
 def apply_transforms(config_cfg:Dict[str, Union[str, int, float]],
                      dataset: tg.data.InMemoryDataset):
     """Apply torch geometric transformations to add the edges and additional informations inside the dataset"""
@@ -196,13 +212,13 @@ def find_loss(loss_name:str):
         raise ValueError("loss function not recognized")
     return loss_fn
 
-def load_models(model_dir:str, num_features:int, config_cfg:Dict, device='cpu'):
+def load_models(model_dir:str, num_features:int, num_classes:int, config_cfg:Dict, device='cpu'):
     """Load the models"""
     models = [0 for i in range(len(os.listdir(model_dir)))]
     print(os.listdir(model_dir))
     for model_path in os.listdir(model_dir):
         checkpoint = torch.load(model_dir + "/" + model_path, map_location=device)
-        model = model_class(num_features, config_cfg["embed_size"], 1, config=config_cfg).to(device)
+        model = model_class(num_features, config_cfg["embed_size"], num_classes, config=config_cfg).to(device)
         model.load_state_dict(checkpoint["model_state_dict"])
         model.eval()
 
@@ -339,19 +355,21 @@ def train_model(model_id:int,
                 loss_fn:Callable,
                 config_cfg:Dict,
                 model_dir:str,
+                train_loader,
+                test_loader,
+                num_features:int,
+                num_classes:int,
                 device:torch.device=torch.device("cpu")):
+
     """Train the model"""
     print(f"Model: {model_id}")
     lst_train_perf = []
     lst_test_perf = []
-    #Create loaders
-    train_loader, test_loader = create_loader(config_cfg)
-    # Create the model with given dimensions
 
     ###TODO:Change the num classes property of the class
     model, cnn_embed, optimizer, lr_scheduler = create_model(config_cfg,
-                                                            train_dataset.num_features,
-                                                            num_classes=dataset.num_classes,
+                                                            num_features,
+                                                            num_classes=num_classes,
                                                             device=device)
     model.train()
     for epoch in range(config_cfg["epochs"]):
@@ -439,33 +457,26 @@ if __name__ == '__main__':
     if not os.path.exists(model_dir_path):
         os.mkdir(model_dir_path)
 
-    if config["fig_dir_name"] is None:
-        fig_name = config["model_name"]
-    else:
-        fig_name = config["fig_dir_name"]
-
-    fig_dir_path = "./Figures/" + fig_name
-    if not os.path.exists(fig_dir_path):
-        os.mkdir(fig_dir_path)
-
-    if config["dataset"] == "Signal":
-        print("Warning depricated")
-        dataset = GrandDatasetSignal().shuffle()
-    elif config['dataset'] == "Classic":
-        dataset = GrandDataset(root=config["root"])
-        train_dataset = dataset.train_datasets[(config["infill_ratio_train"], config["coarse_ratio_train"])]
-        test_dataset = dataset.test_datasets[(config["infill_ratio_test"], config["coarse_ratio_test"])]
-
-        #train_dataset = apply_transforms(config, train_dataset)
-        #test_dataset = apply_transforms(config, test_dataset)
-
-    else:
-        raise ValueError("This dataset don't exist")
 
     loss_fn = find_loss(config["loss_fn"])
 
     def train():
         """Training function"""
+        #Create dirs
+        if config["fig_dir_name"] is None:
+            fig_name = config["model_name"]
+        else:
+            fig_name = config["fig_dir_name"]
+
+        fig_dir_path = "./Figures/" + fig_name
+        if not os.path.exists(fig_dir_path):
+            os.mkdir(fig_dir_path)
+
+        #Load the dataset and loaders
+        dataset, train_dataset, test_dataset = load_dataset(config)
+
+        train_loader, test_loader = create_loader(config, train_dataset, test_dataset)
+
         device = torch.device(config["device"])
         print("device: ", device)
 
@@ -478,6 +489,10 @@ if __name__ == '__main__':
             lst_train_perf, lst_test_perf = train_model(model_id,
                                                         loss_fn=loss_fn,
                                                         config_cfg=config,
+                                                        train_loader=train_loader,
+                                                        test_loader=test_loader,
+                                                        num_features=train_dataset.num_features,
+                                                        num_classes=dataset.num_classes,
                                                         model_dir=model_dir_path,
                                                         device=device
                                                         )
@@ -486,16 +501,21 @@ if __name__ == '__main__':
             plot_training_results(lst_train_perf, lst_test_perf, config, model_id,
                                   fig_dir_path + "/" + str(model_id))
 
+    def test_process(distrib_infill:int, distrib_coarse:int, models, dataset:GrandDataset, config_cfg, device):
+        """Test the models on a given dataset"""
+        train_dataset = dataset.train_datasets[(distrib_infill, distrib_coarse)]
+        test_dataset = dataset.test_datasets[(distrib_infill, distrib_coarse)]
 
+        train_loader, test_loader = create_loader(config_cfg, train_dataset, test_dataset)
 
-    def test():
-        """Test function"""
-        # We don't want to shuffle to keep the same order in the data
-        print(f"config: {config}")
-        device = 'cpu'
-        train_loader, test_loader = create_loader(config)
+        if config_cfg["fig_dir_name"] is None:
+            fig_name = config_cfg["model_name"]
+        else:
+            fig_name = config_cfg["fig_dir_name"]
 
-        models = load_models(model_dir_path, train_dataset.num_features, config, device=device)
+        fig_dir_path = f"./Figures/{fig_name}_{distrib_infill}_{distrib_coarse}"
+        if not os.path.exists(fig_dir_path):
+            os.mkdir(fig_dir_path)
 
         _, train_pred, train_energy = compute_preds_dataset(models, train_loader,
                                                             loss_fn=loss_fn, device=device)
@@ -504,7 +524,7 @@ if __name__ == '__main__':
         # The same thing for test data #
 
         _, test_pred, test_energy = compute_preds_dataset(models, test_loader,
-                                                          loss_fn=loss_fn, device=device)
+                                                        loss_fn=loss_fn, device=device)
         plot_individual_preformance(test_pred, test_energy, mode="test", fig_dir=fig_dir_path)
 
         # ## We computes the bins for all the models ## #
@@ -512,6 +532,53 @@ if __name__ == '__main__':
         test_values = compute_bins(test_pred, test_energy)
 
         plot_bins_results(train_values, test_values, fig_dir=fig_dir_path)
+        #return (train_pred, train_energy), (test_pred, test_energy), (train_values, test_values)
+
+    def test():
+        """Test function"""
+        # We don't want to shuffle to keep the same order in the data
+        print(f"config: {config}")
+        device = 'cpu'
+
+        #Load the dataset and loaders to intialize the models
+        dataset, train_dataset, test_dataset = load_dataset(config)
+
+        models = load_models(model_dir_path,
+                             dataset.train_datasets[(0,0)].num_features,
+                             num_classes=dataset.num_classes,
+                             config_cfg=config,
+                             device=device)
+
+        for (distrib_infill, distrib_coarse) in tqdm(dataset.train_datasets.keys()):
+            train_dataset = dataset.train_datasets[(distrib_infill, distrib_coarse)]
+            test_dataset = dataset.test_datasets[(distrib_infill, distrib_coarse)]
+
+            train_loader, test_loader = create_loader(config, train_dataset, test_dataset)
+
+            if config["fig_dir_name"] is None:
+                fig_name = config["model_name"]
+            else:
+                fig_name = config["fig_dir_name"]
+
+            fig_dir_path = f"./Figures/{fig_name}_{distrib_infill}_{distrib_coarse}"
+            if not os.path.exists(fig_dir_path):
+                os.mkdir(fig_dir_path)
+
+            _, train_pred, train_energy = compute_preds_dataset(models, train_loader,
+                                                                loss_fn=loss_fn, device=device)
+            plot_individual_preformance(train_pred, train_energy, mode="train", fig_dir=fig_dir_path)
+
+            # The same thing for test data #
+
+            _, test_pred, test_energy = compute_preds_dataset(models, test_loader,
+                                                            loss_fn=loss_fn, device=device)
+            plot_individual_preformance(test_pred, test_energy, mode="test", fig_dir=fig_dir_path)
+
+            # ## We computes the bins for all the models ## #
+            train_values = compute_bins(train_pred, train_energy)
+            test_values = compute_bins(test_pred, test_energy)
+
+            plot_bins_results(train_values, test_values, fig_dir=fig_dir_path)
 
 
     if config["test"]:

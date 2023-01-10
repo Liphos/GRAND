@@ -4,16 +4,20 @@ source ../grand_env/bin/activate
 # The arguments are saved under $1, $2, $3 depending on the order in the command
 
 echo "algo: $1"
-echo "num_layers: $2"
-echo "embed_size: $3"
+echo "num_layers_gnn: $2"
+echo "num_layers_dense: $3"
+echo "embed_size: $4"
 
-echo "Model name: $4"
-echo "Cuda and output: $5"
-echo "dataset root: $6"
+echo "Model name: $5"
+echo "Cuda and output: $6"
+echo "dataset root: $7"
+echo "Topk ratio: $8"
 
-for distrib in 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0
+for distrib_infill in 0 5 10 15 20 25 30 35 40
 do
-   nohup python -u core/main.py --batch_size=50 --seed=0 --loss_fn=scaled_l1 --root=$6 --embed_size=$3 --lr=1e-3 --num_layers=$2 --algo=$1 --model_name=$4 --device=cuda:$5 --ant_ratio_test=$distrib --fig_dir_name=$4$distrib --test > output$5.txt &
-   sleep 10
+   for distrib_coarse in 0 5 10 15 20 25 30 35 40
+   do
+   nohup python -u core/main.py  --algo=$1  --infill_ratio_test=$distrib_infill --infill_ratio_train=$distrib_infill --coarse_ratio_test=$distrib_coarse --coarse_ratio_train=$distrib_coarse --batch_size=50 --seed=0 --loss_fn=scaled_l1 --root=$7 --embed_size=$4 --lr=1e-3 --num_layers_gnn=$2 --num_layers_dense=$3 --topkratio=$8 --model_name=$5 --device=cuda:$6 --fig_dir_name=${5}_${distrib_infill}_${distrib_coarse} --not_drop_nodes --test > output$6.txt &
+   done
 done
 
