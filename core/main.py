@@ -4,6 +4,8 @@ import os
 import argparse
 from typing import Dict, Union, List, Tuple, Callable
 
+from multiprocessing import Pool
+from functools import partial
 import torch_geometric as tg
 import torch
 from tqdm import tqdm
@@ -150,6 +152,7 @@ def load_dataset(config_cfg:Dict[str, Union[str, int ,float]]):
         raise ValueError("This dataset don't exist")
 
     return dataset, train_dataset, test_dataset
+
 def apply_transforms(config_cfg:Dict[str, Union[str, int, float]],
                      dataset: tg.data.InMemoryDataset):
     """Apply torch geometric transformations to add the edges and additional informations inside the dataset"""
@@ -235,34 +238,38 @@ def load_models(model_dir:str, num_features:int, num_classes:int, config_cfg:Dic
 
     return models
 
+def compute_preds_dataset_process(model, loader, loss_fn, device):
+    """Compute the prediction and the loss for a given model"""
+    loss = 0
+    n_tot = 0
+    energy = []
+    predictions = []
+    with torch.no_grad():
+        #Enumerate reset the loader enabling to test the same data with all models
+        for _, data in enumerate(loader):
+            data = data.to(device)
+            pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
+            loss += loss_fn(pred[:, 0], data.y, reduction="sum").item()
+            n_tot += len(data.y)
+            predictions = np.concatenate((predictions, pred[:, 0].numpy()))
+            energy = np.concatenate((energy, data.y.numpy()))
+
+    return loss/n_tot, predictions, energy
+
 def compute_preds_dataset(models:List[torch.nn.Module],
                          loader:DataLoader,
                          loss_fn:Callable,
-                         device:Union[str, torch.device]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                         device:Union[str, torch.device]
+                         ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute the predicton and the loss on the dataset"""
 
-    loss_lst = []
-    pred_lst = []
-    for model in models:
-        loss = 0
-        n_tot = 0
-        energy = []
-        predictions = []
-        with torch.no_grad():
-            #Enumerate reset the loader enabling to test the same data with all models
-            for _, data in enumerate(loader):
-                data = data.to(device)
-                pred = model(data.x, data.edge_index, data.batch, data.edge_attr)
-                loss += loss_fn(pred[:, 0], data.y, reduction="sum").item()
-                n_tot += len(data.y)
-                predictions = np.concatenate((predictions, pred[:, 0].numpy()))
-                energy = np.concatenate((energy, data.y.numpy()))
+    compute_dataset_init = partial(compute_preds_dataset_process, loader=loader, loss_fn=loss_fn, device=device)
+    with Pool(5) as pool:
+        results = pool.map(compute_dataset_init, models)
 
-        loss_lst.append(loss/n_tot)
-        pred_lst.append(predictions)
-
-    loss = np.array(loss_lst)
-    pred = np.array(pred_lst)
+    loss = np.array([result[0] for result in results])
+    pred = np.array([result[1] for result in results])
+    energy = results[0][2] #The energy is the same across the results
     print("loss: ", loss)
 
     return loss, pred, energy
@@ -374,11 +381,11 @@ def train_model(model_id:int,
     model.train()
     for epoch in range(config_cfg["epochs"]):
         for data in train_loader:
+            data = data.to(device)
             if not config_cfg["not_drop_nodes"]:
-                _, _, node_mask = tg.utils.dropout_node(data.edge_index, p=0.2)
+                node_mask = torch.rand(data.num_nodes, device=device) > 0.15
                 data = data.subgraph(node_mask)
 
-            data = data.to(device)
             optimizer.zero_grad()
             loss = one_step_loss(model, data, loss_fn, config_cfg, cnn_embed=cnn_embed)
             wandb.log({"loss":loss})
@@ -501,44 +508,12 @@ if __name__ == '__main__':
             plot_training_results(lst_train_perf, lst_test_perf, config, model_id,
                                   fig_dir_path + "/" + str(model_id))
 
-    def test_process(distrib_infill:int, distrib_coarse:int, models, dataset:GrandDataset, config_cfg, device):
-        """Test the models on a given dataset"""
-        train_dataset = dataset.train_datasets[(distrib_infill, distrib_coarse)]
-        test_dataset = dataset.test_datasets[(distrib_infill, distrib_coarse)]
-
-        train_loader, test_loader = create_loader(config_cfg, train_dataset, test_dataset)
-
-        if config_cfg["fig_dir_name"] is None:
-            fig_name = config_cfg["model_name"]
-        else:
-            fig_name = config_cfg["fig_dir_name"]
-
-        fig_dir_path = f"./Figures/{fig_name}_{distrib_infill}_{distrib_coarse}"
-        if not os.path.exists(fig_dir_path):
-            os.mkdir(fig_dir_path)
-
-        _, train_pred, train_energy = compute_preds_dataset(models, train_loader,
-                                                            loss_fn=loss_fn, device=device)
-        plot_individual_preformance(train_pred, train_energy, mode="train", fig_dir=fig_dir_path)
-
-        # The same thing for test data #
-
-        _, test_pred, test_energy = compute_preds_dataset(models, test_loader,
-                                                        loss_fn=loss_fn, device=device)
-        plot_individual_preformance(test_pred, test_energy, mode="test", fig_dir=fig_dir_path)
-
-        # ## We computes the bins for all the models ## #
-        train_values = compute_bins(train_pred, train_energy)
-        test_values = compute_bins(test_pred, test_energy)
-
-        plot_bins_results(train_values, test_values, fig_dir=fig_dir_path)
-        #return (train_pred, train_energy), (test_pred, test_energy), (train_values, test_values)
-
     def test():
         """Test function"""
         # We don't want to shuffle to keep the same order in the data
         print(f"config: {config}")
         device = 'cpu'
+        #device = torch.device(config["device"])
 
         #Load the dataset and loaders to intialize the models
         dataset, train_dataset, test_dataset = load_dataset(config)
@@ -548,8 +523,12 @@ if __name__ == '__main__':
                              num_classes=dataset.num_classes,
                              config_cfg=config,
                              device=device)
-
-        for (distrib_infill, distrib_coarse) in tqdm(dataset.train_datasets.keys()):
+        lst_pourcent_to_test = [0, 5, 10, 15, 20, 25, 30, 35, 40]
+        lst_distrib_to_test = [(i, i) for i in lst_pourcent_to_test]
+        lst_distrib_to_test += [(20, i) for i in lst_pourcent_to_test]
+        lst_distrib_to_test += [(i, 20) for i in lst_pourcent_to_test]
+        for distrib_key in tqdm(lst_distrib_to_test):
+            distrib_infill, distrib_coarse = distrib_key
             train_dataset = dataset.train_datasets[(distrib_infill, distrib_coarse)]
             test_dataset = dataset.test_datasets[(distrib_infill, distrib_coarse)]
 
@@ -559,8 +538,10 @@ if __name__ == '__main__':
                 fig_name = config["model_name"]
             else:
                 fig_name = config["fig_dir_name"]
-
-            fig_dir_path = f"./Figures/{fig_name}_{distrib_infill}_{distrib_coarse}"
+            dir_all_path = f"./Figures/{fig_name}_all/"
+            fig_dir_path = f"{dir_all_path}infill_{distrib_infill}_coarse_{distrib_coarse}/"
+            if not os.path.exists(dir_all_path):
+                os.mkdir(dir_all_path)
             if not os.path.exists(fig_dir_path):
                 os.mkdir(fig_dir_path)
 

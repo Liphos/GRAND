@@ -135,24 +135,53 @@ class HierarchicalGCN(torch.nn.Module):
         self.convinput = GCNBlock(in_feats, h_feats)
         self.convblocks = torch.nn.ModuleList([GCNBlock(h_feats, h_feats, add_residue=True) for _ in range(self.num_layers_gnn)])
 
-        self.dense_in = torch.nn.Linear(h_feats, h_feats)
+        if int(config["topkratio"]) != config["topkratio"]:
+            raise ValueError("TopKratio must be an int here")
+        self.ratio = int(config["topkratio"])
+
+        if self.ratio != 1:
+            self.pool = tgn.pool.TopKPooling(h_feats, ratio=self.ratio)
+
+        self.dense_in = torch.nn.Linear(self.ratio * config["num_layers_gnn"] * h_feats, h_feats)
         self.dense = torch.nn.ModuleList([torch.nn.Linear(h_feats, h_feats) for _ in range(self.num_layers_dense)])
         self.dense_out = torch.nn.Linear(h_feats, num_classes)
 
 
     def forward(self, inputs, edge_index, batch, edge_weight=None):
         """equivalent to __call__"""
-        h_emb, flat_1, edge_index, edge_weight, batch = self.convinput(inputs,
+        h_emb, flat, edge_index, edge_weight, batch = self.convinput(inputs,
                                                                        edge_index,
                                                                        batch,
                                                                        edge_weight=edge_weight)
-        flatten = flat_1
+        if self.ratio != 1:
+            h_emb, _, _, batch, _, _ = self.pool(flat,
+                                                edge_index,
+                                                batch=batch,
+                                                edge_attr=edge_weight)
+            emb_batch = torch.stack(unbatch(h_emb, batch=batch))
+            flatten = [torch.flatten(emb_batch, start_dim=1)]
+
+        else:
+            flatten = [tgn.pool.global_max_pool(h_emb, batch=batch)]
+
         for i in range(self.num_layers_gnn):
             h_emb, flat, edge_index, edge_weight, batch = self.convblocks[i](h_emb,
                                                                              edge_index,
                                                                              batch,
                                                                              edge_weight=edge_weight)
-            flatten += flat
+
+            if self.ratio != 1:
+                h_emb, _, _, batch, _, _ = self.pool(flat,
+                                                    edge_index,
+                                                    batch=batch,
+                                                    edge_attr=edge_weight)
+                emb_batch = torch.stack(unbatch(h_emb, batch=batch))
+                flatten.append(torch.flatten(emb_batch, start_dim=1))
+
+            else:
+                flatten.append(tgn.pool.global_max_pool(h_emb, batch=batch))
+
+        flatten = torch.cat(flatten, axis=-1)
 
         if torch.any(torch.isnan(flatten)):
             print("Nan detected in the prediction")
@@ -373,6 +402,7 @@ def algorithm_from_name(name:str):
 
 _dict_from_name = {
     "GCN": GCN,
+    "HierarchicalGCN": HierarchicalGCN,
     "TopkGCN": TopkGCN,
     "GatedGCN": GatedGCN,
     "Dense": DenseNet,

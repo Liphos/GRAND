@@ -107,7 +107,7 @@ def create_obs(efield_loc_arr:np.ndarray,
     p2p_energy_sm, p2p_energy_first_sm = compute_p2p(efield_smooth_arr)
 
     obs = np.concatenate(
-        (antenna_pos/1e4,
+        ( #antenna_pos/1e4, Test without the position
         (((p2p_energy) ** (1/5)) / 8),
         (((p2p_energy_sm) ** (1/5)) /8),
         efield_loc_arr[:, :, 0][np.expand_dims(np.arange(len(efield_loc_arr)), axis=-1),
@@ -396,5 +396,5 @@ class GrandDatasetSignal(InMemoryDataset):
 
 
 if __name__ == '__main__':
-    dataset = GrandDataset("GrandDatasetCor", is_core_contained=False, max_degree=20, distance=1500)
+    dataset = GrandDataset("GrandDatasetNoPosCor", add_degree=False, is_core_contained=False, max_degree=20, distance=1500)
     print(dataset.train_datasets[(25, 25)])
