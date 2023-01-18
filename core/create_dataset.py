@@ -142,14 +142,14 @@ def compute_antennas_to_keep(antenna_id_to_pos: Dict[str, List[float]],
     else:
         core_ants = set(antenna_id_to_pos.keys())
     antenna_no_dense, antenna_dense = find_dense_antennas(antenna_id_to_pos)
+    key_coarse_lst = list(antenna_no_dense.keys())
+    key_infill_lst = list(antenna_dense.keys())
+    random.shuffle(key_infill_lst)
+    random.shuffle(key_coarse_lst)
     antennas_to_keep = {}
     for distrib_infill in lst_pourcent:
         for distrib_coarse in lst_pourcent:
             key = (distrib_infill, distrib_coarse)
-            key_infill_lst = list(antenna_dense.keys())
-            random.shuffle(key_infill_lst)
-            key_coarse_lst = list(antenna_no_dense.keys())
-            random.shuffle(key_coarse_lst)
 
             ants_to_keep = set()
             ants_to_keep.update(key_infill_lst[:int(len(key_infill_lst) * (1-distrib_infill*0.01))])
@@ -396,5 +396,5 @@ class GrandDatasetSignal(InMemoryDataset):
 
 
 if __name__ == '__main__':
-    dataset = GrandDataset("GrandDatasetNoPosCor", add_degree=False, is_core_contained=False, max_degree=20, distance=1500)
+    dataset = GrandDataset("GrandDatasetLocPos", add_degree=False, is_core_contained=False, max_degree=20, distance=1500)
     print(dataset.train_datasets[(25, 25)])

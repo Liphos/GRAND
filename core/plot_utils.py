@@ -89,7 +89,7 @@ def plot_bins_results(train_values: Tuple[np.ndarray, np.ndarray, np.ndarray],
     plt.plot(true_test_mean, [0 for _ in range(len(true_test_mean))], "k")
     plt.title("Results")
     plt.xlabel("ground truth energy (EeV)")
-    plt.ylabel("$Residue E_{pr} - E_{th} (EeV)$")
+    plt.ylabel("$E_{pr} - E_{th} (EeV)$")
     plt.xlim(0, 4.1)
     plt.legend()
     if fig_dir is not None:
@@ -105,7 +105,7 @@ def plot_bins_results(train_values: Tuple[np.ndarray, np.ndarray, np.ndarray],
     plt.plot(true_test_mean, [0 for _ in range(len(true_test_mean))], "k")
     plt.title("Results")
     plt.xlabel("ground truth energy (EeV)")
-    plt.ylabel(r"$Residue \Delta_{E}/E_{th} $")
+    plt.ylabel(r"$\frac{E_{pr} - E_{th}}{E_{th}} $")
     plt.xlim(0, 4.1)
     plt.legend()
     if fig_dir is not None:

@@ -525,8 +525,8 @@ if __name__ == '__main__':
                              device=device)
         lst_pourcent_to_test = [0, 5, 10, 15, 20, 25, 30, 35, 40]
         lst_distrib_to_test = [(i, i) for i in lst_pourcent_to_test]
-        lst_distrib_to_test += [(20, i) for i in lst_pourcent_to_test]
-        lst_distrib_to_test += [(i, 20) for i in lst_pourcent_to_test]
+        #lst_distrib_to_test += [(20, i) for i in lst_pourcent_to_test]
+        #lst_distrib_to_test += [(i, 20) for i in lst_pourcent_to_test]
         for distrib_key in tqdm(lst_distrib_to_test):
             distrib_infill, distrib_coarse = distrib_key
             train_dataset = dataset.train_datasets[(distrib_infill, distrib_coarse)]
