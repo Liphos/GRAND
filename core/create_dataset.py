@@ -107,7 +107,7 @@ def create_obs(efield_loc_arr:np.ndarray,
     p2p_energy_sm, p2p_energy_first_sm = compute_p2p(efield_smooth_arr)
 
     obs = np.concatenate(
-        ( #antenna_pos/1e4, Test without the position
+        (
         (((p2p_energy) ** (1/5)) / 8),
         (((p2p_energy_sm) ** (1/5)) /8),
         efield_loc_arr[:, :, 0][np.expand_dims(np.arange(len(efield_loc_arr)), axis=-1),
@@ -178,7 +178,7 @@ class GrandDataset(InMemoryDataset):
         ]
         if self.add_degree:
             self.all_transforms.append(tg.transforms.OneHotDegree(max_degree=max_degree))
-        self.lst_pourcent = [0, 2, 5, 10, 15, 20, 22, 25, 30, 35, 40]
+        self.lst_pourcent = [0, 2, 5, 10, 15, 18, 20, 22, 25, 30, 35, 40]
 
         super().__init__("./data/" + root)
         self.root = "./data/" + root
@@ -396,5 +396,9 @@ class GrandDatasetSignal(InMemoryDataset):
 
 
 if __name__ == '__main__':
-    dataset = GrandDataset("GrandDatasetLocPos", add_degree=False, is_core_contained=False, max_degree=20, distance=1500)
+    dataset = GrandDataset("GrandDataset",
+                           add_degree=False,
+                           is_core_contained=False,
+                           max_degree=20,
+                           distance=1500)
     print(dataset.train_datasets[(25, 25)])

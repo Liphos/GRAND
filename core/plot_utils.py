@@ -62,7 +62,7 @@ def plot_individual_preformance(pred: np.ndarray,
         plt.clf()
         plt.scatter(energy, i[1])
         plt.plot(energy, energy, "k")
-        plt.title("Results on the {mode}ing set")
+        plt.title(f"Results on the {mode}ing set")
         plt.xlabel("ground truth energy (eeV)")
         plt.ylabel("predicted energy (eeV)")
         plt.xlim(0, 4.1)

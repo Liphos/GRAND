@@ -33,14 +33,6 @@ def parser_to_config():
     parser.add_argument("--algo",
                         type=str, default="GCN",
                         help="The model to use")
-    parser.add_argument("--infill_ratio_test",
-                        type=float, default=0,
-                        help="The ratio of infill antenna to drop for testing, "
-                             "0 means keep all and 1 drop all")
-    parser.add_argument("--infill_ratio_train",
-                        type=float, default=0,
-                        help="The ratio of infill antenna to drop for training, "
-                             "0 means keep all and 1 drop all")
     parser.add_argument("--batch_size",
                         type=int, default=20,
                         help="batch size of the training")
@@ -61,6 +53,9 @@ def parser_to_config():
     parser.add_argument("--dropout",
                         type=float, default=0,
                         help="The dropout rate")
+    parser.add_argument("--drop_nodes",
+                        action='store_true', default=False,
+                        help="Train on the whole graph wdroping nodes randomly")
     parser.add_argument("--d_wandb",
                         action='store_true', default=False,
                         help="Don't create a run on wandb. "
@@ -74,6 +69,14 @@ def parser_to_config():
     parser.add_argument("--fig_dir_name",
                         type=str, default=None,
                         help="Use to save the figures with a different name than the model name")
+    parser.add_argument("--infill_ratio_test",
+                        type=float, default=0,
+                        help="The ratio of infill antenna to drop for testing, "
+                             "0 means keep all and 1 drop all")
+    parser.add_argument("--infill_ratio_train",
+                        type=float, default=0,
+                        help="The ratio of infill antenna to drop for training, "
+                             "0 means keep all and 1 drop all")
     parser.add_argument("--loss_fn",
                         type=str, default="mse", choices=["mse", "scaled_mse", "scaled_l1"],
                         help="loss function to use")
@@ -93,7 +96,7 @@ def parser_to_config():
                         type=int, default=2,
                         help="The number of dense layers to use in the MLP")
     parser.add_argument("--readout",
-                        type=str, default="sum",
+                        type=str, default="mean",
                         help="The readout function to use")
     parser.add_argument("--root",
                         type=str, default="./GrandDatasetNoDense",
@@ -107,9 +110,6 @@ def parser_to_config():
     parser.add_argument("--topkratio",
                         type=float, default=1,
                         help="The ratio to use for the topk pooling")
-    parser.add_argument("--not_drop_nodes",
-                        action='store_true', default=False,
-                        help="Train on the whole graph instead of dropiing nodes randomly")
     parser.add_argument("--verbose_t",
                         type=int, default=50,
                         help="The time between each test during training")
@@ -264,7 +264,7 @@ def compute_preds_dataset(models:List[torch.nn.Module],
     """Compute the predicton and the loss on the dataset"""
 
     compute_dataset_init = partial(compute_preds_dataset_process, loader=loader, loss_fn=loss_fn, device=device)
-    with Pool(5) as pool:
+    with Pool(10) as pool:
         results = pool.map(compute_dataset_init, models)
 
     loss = np.array([result[0] for result in results])
@@ -382,8 +382,9 @@ def train_model(model_id:int,
     for epoch in range(config_cfg["epochs"]):
         for data in train_loader:
             data = data.to(device)
-            if not config_cfg["not_drop_nodes"]:
-                node_mask = torch.rand(data.num_nodes, device=device) > 0.15
+            if config_cfg["drop_nodes"]:
+                prob_remove = 0.3 * (torch.rand(1))
+                node_mask = torch.rand(data.num_nodes, device=device) > prob_remove.item()
                 data = data.subgraph(node_mask)
 
             optimizer.zero_grad()
@@ -481,7 +482,7 @@ if __name__ == '__main__':
 
         #Load the dataset and loaders
         dataset, train_dataset, test_dataset = load_dataset(config)
-
+        print(len(train_dataset.data.y), len(test_dataset.data.y))
         train_loader, test_loader = create_loader(config, train_dataset, test_dataset)
 
         device = torch.device(config["device"])
@@ -523,7 +524,7 @@ if __name__ == '__main__':
                              num_classes=dataset.num_classes,
                              config_cfg=config,
                              device=device)
-        lst_pourcent_to_test = [0, 5, 10, 15, 20, 25, 30, 35, 40]
+        lst_pourcent_to_test = [0, 10, 20, 30, 40]
         lst_distrib_to_test = [(i, i) for i in lst_pourcent_to_test]
         #lst_distrib_to_test += [(20, i) for i in lst_pourcent_to_test]
         #lst_distrib_to_test += [(i, 20) for i in lst_pourcent_to_test]
