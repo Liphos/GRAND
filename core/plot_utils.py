@@ -83,26 +83,9 @@ def plot_bins_results(train_values: Tuple[np.ndarray, np.ndarray, np.ndarray],
 
     #Plot the results on the bins
     plt.clf()
-    #TODO: Error instead of dividing of taking the mean of (E_pr - e_th)/e_th we did mean(E_pr - E_th)/mean(E_th)
     plt.errorbar(true_train_mean, pred_train_mean, yerr=pred_train_std, fmt="o", label="Train")
     plt.plot(true_train_mean, [0 for _ in range(len(true_train_mean))], "k")
     plt.errorbar(true_test_mean, pred_test_mean, yerr=pred_test_std, fmt="o", label="Val")
-    plt.plot(true_test_mean, [0 for _ in range(len(true_test_mean))], "k")
-    plt.title("Results")
-    plt.xlabel("ground truth energy (EeV)")
-    plt.ylabel("$E_{pr} - E_{th} (EeV)$")
-    plt.xlim(0, 4.1)
-    plt.legend()
-    if fig_dir is not None:
-        plt.savefig(fig_dir + "/" + "all")
-
-    #Plot the residue
-    plt.figure()
-    plt.errorbar(true_train_mean, pred_train_mean/true_train_mean,
-                    yerr=pred_train_std/true_train_mean, fmt="o", label="Train")
-    plt.plot(true_train_mean, [0 for _ in range(len(true_train_mean))], "k")
-    plt.errorbar(true_test_mean, pred_test_mean/true_test_mean,
-                    yerr=pred_test_std/true_test_mean, fmt="o", label="Val")
     plt.plot(true_test_mean, [0 for _ in range(len(true_test_mean))], "k")
     plt.title("Results")
     plt.xlabel("ground truth energy (EeV)")

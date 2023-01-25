@@ -314,8 +314,8 @@ def compute_bins(pred: np.ndarray, energy: np.ndarray) -> Tuple[np.ndarray, np.n
     pred_mean, pred_std, true_mean = [], [], []
     for e_bin in enumerate(bins):
         indicies = np.where(ind_bins == e_bin[0])[0]
-        pred_mean.append(np.mean(pred[:, indicies] - energy[indicies]))
-        pred_std.append(np.sqrt(np.mean(np.std(pred[:, indicies], axis=0)**2)))
+        pred_mean.append(np.mean((pred[:, indicies] - energy[indicies])/energy[indicies]))
+        pred_std.append(np.sqrt(np.mean(np.std((pred[:, indicies] - energy[indicies])/energy[indicies], axis=0)**2)))
         true_mean.append(np.mean(energy[indicies]))
 
     pred_mean = np.array(pred_mean)
