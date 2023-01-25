@@ -1,5 +1,5 @@
 """Functions to help plot results"""
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 import matplotlib.pyplot as plt
 import matplotlib
@@ -49,7 +49,7 @@ def plot_training_results(train_perf:List[float],
 def plot_individual_preformance(pred: np.ndarray,
                                 energy: np.ndarray,
                                 mode:str="train",
-                                fig_dir:str=None) -> None:
+                                fig_dir:Optional[str]=None) -> None:
     """Plot the performance of each models
 
     Args:
@@ -71,7 +71,7 @@ def plot_individual_preformance(pred: np.ndarray,
 
 def plot_bins_results(train_values: Tuple[np.ndarray, np.ndarray, np.ndarray],
                       test_values: Tuple[np.ndarray, np.ndarray, np.ndarray],
-                      fig_dir:str=None) -> None:
+                      fig_dir:Optional[str]=None) -> None:
     """Plot the results on the bins
 
     Args:
@@ -83,6 +83,7 @@ def plot_bins_results(train_values: Tuple[np.ndarray, np.ndarray, np.ndarray],
 
     #Plot the results on the bins
     plt.clf()
+    #TODO: Error instead of dividing of taking the mean of (E_pr - e_th)/e_th we did mean(E_pr - E_th)/mean(E_th)
     plt.errorbar(true_train_mean, pred_train_mean, yerr=pred_train_std, fmt="o", label="Train")
     plt.plot(true_train_mean, [0 for _ in range(len(true_train_mean))], "k")
     plt.errorbar(true_test_mean, pred_test_mean, yerr=pred_test_std, fmt="o", label="Val")
