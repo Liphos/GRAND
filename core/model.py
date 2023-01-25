@@ -1,72 +1,11 @@
 """Definining the model class"""
-
+from typing import Dict, Any
 import torch
 import torch.nn.functional as F
 
-from torch_geometric.nn import GCNConv, GatedGraphConv, GATv2Conv, GINConv, TAGConv
+from torch_geometric.nn import GCNConv, GatedGraphConv, GATv2Conv, GINConv, TAGConv, MessagePassing
 import torch_geometric.nn as tgn
 from torch_geometric.utils import unbatch
-
-class BaseModel(torch.nn.Module):
-    """Base class for the models"""
-    def __init__(self, gnn_block:torch.nn.Module, in_feats: int, h_feats: int, num_classes:int, config=None):
-        super().__init__()
-        self.dropout_rate = config["dropout"]
-        self.num_layers_gnn = config["num_layers_gnn"] - 1
-        self.num_layers_dense = config["num_layers_dense"] - 2
-        self.convinput = gnn_block(in_feats, h_feats)
-        self.convblocks = torch.nn.ModuleList([gnn_block(h_feats, h_feats, add_residue=True) for _ in range(self.num_layers_gnn)])
-        if int(config["topkratio"]) != config["topkratio"]:
-            raise ValueError("TopKratio must be an int here")
-        self.ratio = int(config["topkratio"])
-
-        if self.ratio != 1:
-            self.pool = tgn.pool.TopKPooling(in_feats, ratio=self.ratio)
-        else:
-            if config["readout"] == "mean":
-                self.pool = tgn.pool.global_mean_pool
-            elif config["readout"] == "max":
-                self.pool = tgn.pool.global_max_pool
-            else:
-                raise NotImplementedError("Readout is only between mean and max")
-
-        self.dense_in = torch.nn.Linear(self.ratio * h_feats, h_feats)
-        self.dense = torch.nn.ModuleList([torch.nn.Linear(h_feats, h_feats) for _ in range(self.num_layers_dense)])
-        self.dense_out = torch.nn.Linear(h_feats, num_classes)
-
-    def forward(self, inputs, edge_index, batch, edge_weight=None):
-        """equivalent to __call__"""
-        h_emb, flat_1, edge_index, edge_weight, batch = self.convinput(inputs,
-                                                                       edge_index,
-                                                                       batch,
-                                                                       edge_weight=edge_weight)
-        flatten = flat_1
-        for i in range(self.num_layers_gnn):
-            h_emb, _, edge_index, edge_weight, batch = self.convblocks[i](h_emb,
-                                                                             edge_index,
-                                                                             batch,
-                                                                             edge_weight=edge_weight)
-        if self.ratio != 1:
-            h_emb, _, _, batch, _, _ = self.pool(h_emb,
-                                                 edge_index,
-                                                 batch=batch,
-                                                 edge_attr=edge_weight)
-            emb_batch = torch.stack(unbatch(h_emb, batch=batch))
-            flatten = torch.flatten(emb_batch, start_dim=1)
-        else:
-            flatten = self.pool(h_emb, batch=batch)
-
-
-        if torch.any(torch.isnan(flatten)):
-            print("Nan detected in the prediction")
-
-        h_emb = F.relu(self.dense_in(flatten))
-        for layer in self.dense:
-            h_emb = F.relu(layer(F.dropout(h_emb, p=self.dropout_rate)))
-        outputs = self.dense_out(F.dropout(h_emb, p=self.dropout_rate))
-
-        return outputs
-
 
 class DenseNet(torch.nn.Module):
     """MLP model"""
@@ -210,8 +149,6 @@ class GATBlock(torch.nn.Module):
             h_emb = F.relu(h_emb)
 
         flat = tgn.pool.global_max_pool(h_emb, batch=batch)
-        #flat = torch.cat([tgn.pool.global_mean_pool(h_emb, batch=batch),
-        #                  tgn.pool.global_max_pool(h_emb, batch=batch)], axis=-1)
 
         return h_emb, flat, edge_index, edge_attr, batch
 
@@ -230,6 +167,13 @@ class GAT(torch.nn.Module):
 
         if self.ratio != 1:
             self.pool = tgn.pool.TopKPooling(h_feats, ratio=self.ratio)
+        else:
+            if config["readout"] == "mean":
+                self.pool = tgn.pool.global_mean_pool
+            elif config["readout"] == "max":
+                self.pool = tgn.pool.global_max_pool
+            else:
+                raise NotImplementedError("Readout is only between mean and max")
 
         self.dense_in = torch.nn.Linear(self.ratio * h_feats, h_feats)
         self.dense = torch.nn.ModuleList([torch.nn.Linear(h_feats, h_feats) for _ in range(self.num_layers_dense)])
@@ -256,7 +200,7 @@ class GAT(torch.nn.Module):
             emb_batch = torch.stack(unbatch(h_emb, batch=batch))
             flatten = torch.flatten(emb_batch, start_dim=1)
         else:
-            flatten = tgn.pool.global_max_pool(h_emb, batch=batch)
+            flatten = self.pool(h_emb, batch=batch)
 
 
         if torch.any(torch.isnan(flatten)):
@@ -294,8 +238,6 @@ class GINBlock(torch.nn.Module):
             h_emb = F.relu(h_emb)
 
         flat = tgn.pool.global_max_pool(h_emb, batch=batch)
-        #flat = torch.cat([tgn.pool.global_mean_pool(h_emb, batch=batch),
-        #                  tgn.pool.global_max_pool(h_emb, batch=batch)], axis=-1)
 
         return h_emb, flat, edge_index, edge_attr, batch
 
